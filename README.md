@@ -153,10 +153,10 @@ export BLINKPAY_CACHE_STORE=redis       # Laravel only, optional
 Access tokens last about an hour and are refreshed five minutes early. The client keeps them in a `TokenCacheInterface`:
 
 - **Default**: `ApcuTokenCache` when the APCu extension is loaded and enabled, so a plain-PHP or platform-module integration under PHP-FPM shares one token across requests with no configuration. Otherwise `InMemoryTokenCache`, which is per-process: fine for CLI scripts and tests, but under PHP-FPM without APCu every request fetches a new token, and the token endpoint is rate limited. Install `ext-apcu` or pass a persistent cache.
-- **Frameworks**: the Laravel, Symfony and CakePHP integrations use the framework cache automatically.
+- **Frameworks**: the Laravel, Symfony and CakePHP integrations use the framework cache automatically. The store is whichever one the framework is configured with, and a stock install of all three points at the filesystem (Laravel's `file` store in older skeletons, Symfony's `cache.app`, Cake's `FileEngine`), which would write bearer tokens to disk. Point `BLINKPAY_CACHE_STORE`, `blink_debit.cache` or `BlinkPay.cacheConfig` at a memory store (redis, memcached, APCu) instead.
 - **Plain PHP**: pass a `Psr16TokenCache`, a `Psr6TokenCache`, or any `TokenCacheInterface` implementation as the fourth constructor argument (or the first argument of `fromEnvironment()`).
 
-Cache keys are scoped by environment and client ID, so a shared cache can never serve a sandbox token to a production client or one merchant's token to another. The SDK never ships a file-backed cache, which would write bearer tokens to disk. Concurrent workers that miss an empty cache each fetch a token; every token is valid and the retry on `429` absorbs the burst, so no cross-process lock is taken.
+Cache keys are scoped by environment and client ID, so a shared cache can never serve a sandbox token to a production client or one merchant's token to another. The SDK ships no file-backed cache of its own, which would write bearer tokens to disk; where the cache is the framework's, keeping tokens off disk is the store choice above. Concurrent workers that miss an empty cache each fetch a token; every token is valid and the retry on `429` absorbs the burst, so no cross-process lock is taken.
 
 ## Client creation
 
@@ -196,7 +196,7 @@ class CheckoutController extends Controller
 }
 ```
 
-Tokens are persisted in the default cache store (or `BLINKPAY_CACHE_STORE`). To use your own HTTP stack or token store, bind `HttpTransportInterface` or `TokenCacheInterface` in a provider of your own; the package provider picks those bindings up.
+Tokens are persisted in the default cache store, or the one named by `BLINKPAY_CACHE_STORE`; set it to `redis`, `memcached` or `apc` rather than `file`. To use your own HTTP stack or token store, bind `HttpTransportInterface` or `TokenCacheInterface` in a provider of your own; the package provider picks those bindings up.
 
 ### Symfony 6.1+
 Register `BlinkPay\BlinkDebit\Symfony\BlinkDebitBundle` in `config/bundles.php`, then:
@@ -206,7 +206,7 @@ blink_debit:
   client_id: '%env(BLINKPAY_CLIENT_ID)%'
   client_secret: '%env(BLINKPAY_CLIENT_SECRET)%'
   # sandbox: false                                            # omit to stay in sandbox; see note
-  # cache: cache.app                                          # PSR-6 pool for tokens
+  # cache: cache.app                                          # PSR-6 pool for tokens; prefer a memory-backed pool
   # timeout: 30
   # http_client: Symfony\Component\HttpClient\Psr18Client     # PSR-18 instead of cURL
 ```
@@ -239,7 +239,7 @@ services:
     'clientId' => env('BLINKPAY_CLIENT_ID', ''),
     'clientSecret' => env('BLINKPAY_CLIENT_SECRET', ''),
     'sandbox' => env('BLINKPAY_SANDBOX'),   // parsed by the plugin; unset or blank means sandbox
-    // 'cacheConfig' => 'default',
+    // 'cacheConfig' => 'default',   // prefer a Redis, Memcached or APCu engine over FileEngine
     // 'timeout' => 30,
 ],
 
@@ -306,7 +306,7 @@ try {
 
 ### Retries
 - A `401` on an authenticated call is retried once with a fresh token, so a credential rotation does not strand cached tokens. A second `401` raises `UnauthorisedException`.
-- A `429` is retried up to twice more (after 1 s, then 5 s), honouring a short `Retry-After` header. This applies to every request, including the token fetch, because a rate-limited request was never processed.
+- A `429` is retried up to twice more (after 1 s, then 5 s), or after the `Retry-After` the server sent when it is 30 s or less; a longer `Retry-After` ends the retries at once, and the typed exception is thrown, rather than retrying sooner than asked. This applies to every request, including the token fetch, because a rate-limited request was never processed.
 - A `5xx` or transport failure is retried on the same schedule **only when the request can be replayed safely**: any `GET` or `DELETE`, the token fetch, and a `POST` that carries an idempotency key (the API replays the original response). A `POST` without a key, such as a refund created without one or a subscription, is not retried, since the first attempt may have succeeded; the exception tells you so.
 - Invalid IDs, non-UUID idempotency keys, malformed amounts, over-long PCR text, non-HTTPS callback URLs and unsafe header values are rejected locally, before any request is sent and before any token is fetched.
 - A token-endpoint failure names the HTTP status and the server's message; only `400`/`401`/`403` are reported as a credential problem, so a rate limit or outage does not send you to rotate secrets.
@@ -383,7 +383,7 @@ Payment settlement is asynchronous. Payments transition through these states (co
 For a bank (A2A) payment, `AcceptedSettlementCompleted` means the payer's bank has sent the money, and the payment carries `accepted_reason` = `source_bank_payment_sent`. For a card payment made through the gateway, it means the card network accepted the charge (`accepted_reason` = `card_network_accepted`); the funds arrive through card settlement, and the payment's `amount` may carry `surcharge` and `total_charge` (the amount the customer actually paid, inclusive of surcharge) when surcharging is enabled for your account. Store `accepted_reason` with the order: it decides which refund type applies later. Constants are on `Enum\AcceptedReason`.
 
 ### Await helpers
-Four helpers poll once a second for up to `$maxWaitSeconds` attempts and turn the outcome into typed exceptions, mirroring the Java and Node SDKs. They block, so call them from a queue job, a scheduled command or a CLI script rather than a web request:
+Four helpers poll once a second for up to `$maxWaitSeconds` attempts and turn the outcome into typed exceptions, mirroring the Java and Node SDKs. The budget counts polls rather than elapsed time: a poll that times out or is retried adds its own duration, so lower `setRequestTimeout()` when the total wait matters. They block, so call them from a queue job, a scheduled command or a CLI script rather than a web request:
 
 | Helper | Returns when | Throws | On timeout |
 | --- | --- | --- | --- |
@@ -392,7 +392,7 @@ Four helpers poll once a second for up to `$maxWaitSeconds` attempts and turn th
 | `awaitAuthorisedEnduringConsent($id, $seconds)` | Consent is `Authorised` | `ConsentRejectedException`, `ConsentTimeoutException` | **Revokes** the consent (it grants ongoing access), throws `ConsentTimeoutException` |
 | `awaitSuccessfulPayment($id, $seconds)` | Payment is `AcceptedSettlementCompleted` | `PaymentRejectedException` | Throws `PaymentTimeoutException`; the payment may still settle, keep polling or use the webhook |
 
-A failed revoke is attached as the exception's `getPrevious()`. A poll that fails with a transport, `5xx` or `429` error leaves the outcome unknown, so it is absorbed and the next poll reads the authoritative status; a `404` or other client error propagates at once. `PaymentTimeoutException` is not a failure: never release goods on it, and never treat it as a rejection.
+A failed revoke is attached as the exception's `getPrevious()`. If the revoke is refused with `409` because the customer authorised in the moment after the last poll, the quick payment is re-read and reported as settled or as `PaymentTimeoutException`, never as abandoned. A poll that fails with a transport, `5xx` or `429` error leaves the outcome unknown, so it is absorbed and the next poll reads the authoritative status; a `404` or other client error propagates at once. `PaymentTimeoutException` is not a failure: never release goods on it, and never treat it as a rejection.
 
 To poll on your own schedule instead, compare statuses with the constants rather than literals, so a typo cannot silently mis-classify a payment:
 ```php
@@ -745,7 +745,7 @@ The PSR interface packages are not runtime dependencies of this library; they ar
 - Header values from `RequestOptions` and idempotency keys are validated so untrusted input cannot inject headers.
 - Webhook signatures are compared in constant time, with an empty secret always failing and stale or future-dated timestamps rejected.
 - Sandbox is the default environment; production must be opted into explicitly, and an unparseable `BLINKPAY_SANDBOX` value is an error rather than a guess.
-- Tokens are cached only in memory (process or APCu) or in the cache you supply; the SDK never writes them to disk.
+- Tokens are cached only in memory (process or APCu) or in the cache you supply; the SDK itself never writes them to disk, so give the framework integrations a memory-backed store.
 - Requests that may have moved money are never retried blindly: a `5xx` or transport failure is replayed only under an idempotency key the API de-duplicates on.
 
 If you believe you have found a security issue, contact [sysadmin@blinkpay.co.nz](mailto:sysadmin@blinkpay.co.nz) rather than opening a public issue.

@@ -91,12 +91,27 @@ class BlinkDebitClientResilienceTest extends TestCase
     {
         $this->queueToken();
         $this->transport->queue(429, [], ['retry-after' => '2']);
-        $this->transport->queue(429, [], ['retry-after' => '600']);   // too long to wait: schedule wins
+        $this->transport->queue(429, [], ['retry-after' => 'soon']);   // unparseable: schedule wins
         $this->transport->queue(200, []);
 
         $this->client()->getMeta();
 
         $this->assertSame([2000, 5000], $this->sleeps);
+    }
+
+    public function testLongRetryAfterEndsTheRetriesInsteadOfRetryingSooner(): void
+    {
+        $this->queueToken();
+        $this->transport->queue(429, ['message' => 'slow down'], ['retry-after' => '600']);
+
+        try {
+            $this->client()->getMeta();
+            $this->fail('Expected a RateLimitExceededException.');
+        } catch (RateLimitExceededException $exception) {
+            $this->assertSame(429, $exception->getStatusCode());
+            $this->assertCount(2, $this->transport->requests, 'Token fetch plus the single attempt.');
+            $this->assertSame([], $this->sleeps, 'Never retried sooner than the server asked.');
+        }
     }
 
     public function testExhaustedRetriesRaiseTheTypedException(): void

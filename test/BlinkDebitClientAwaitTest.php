@@ -7,6 +7,7 @@ namespace BlinkPay\BlinkDebit\Test;
 use BlinkPay\BlinkDebit\BlinkDebitClient;
 use BlinkPay\BlinkDebit\Enum\ConsentStatus;
 use BlinkPay\BlinkDebit\Enum\PaymentStatus;
+use BlinkPay\BlinkDebit\Exception\ConflictException;
 use BlinkPay\BlinkDebit\Exception\ConsentRejectedException;
 use BlinkPay\BlinkDebit\Exception\ConsentTimeoutException;
 use BlinkPay\BlinkDebit\Exception\PaymentRejectedException;
@@ -149,6 +150,48 @@ class BlinkDebitClientAwaitTest extends TestCase
         } catch (ConsentTimeoutException $exception) {
             $this->assertStringContainsString('left unrevoked', $exception->getMessage());
             $this->assertInstanceOf(ResourceNotFoundException::class, $exception->getPrevious());
+        }
+    }
+
+    public function testQuickPaymentAuthorisedDuringTheRevokeIsReportedAsInFlight(): void
+    {
+        $this->queueQuickPayment(ConsentStatus::AWAITING_AUTHORISATION);
+        $this->transport->queue(409, ['message' => 'consent already authorised']);
+        $this->queueQuickPayment(ConsentStatus::CONSUMED, [['status' => PaymentStatus::ACCEPTED_SETTLEMENT_IN_PROCESS]]);
+
+        try {
+            $this->client()->awaitSuccessfulQuickPayment(self::ID, 1);
+            $this->fail('Expected a PaymentTimeoutException.');
+        } catch (PaymentTimeoutException $exception) {
+            $this->assertStringContainsString('keep polling', $exception->getMessage());
+            $this->assertSame(['GET', 'DELETE', 'GET'], $this->methods(), 'The 409 triggers one re-read.');
+        }
+    }
+
+    public function testQuickPaymentSettledDuringTheRevokeIsReturned(): void
+    {
+        $this->queueQuickPayment(ConsentStatus::AWAITING_AUTHORISATION);
+        $this->transport->queue(409, ['message' => 'consent already authorised']);
+        $this->queueQuickPayment(ConsentStatus::CONSUMED, [['status' => PaymentStatus::ACCEPTED_SETTLEMENT_COMPLETED]]);
+
+        $result = $this->client()->awaitSuccessfulQuickPayment(self::ID, 1);
+
+        $this->assertSame(ConsentStatus::CONSUMED, $result['consent']['status']);
+        $this->assertSame(['GET', 'DELETE', 'GET'], $this->methods());
+    }
+
+    public function testQuickPaymentStillPendingAfterARevokeConflictIsATimeout(): void
+    {
+        $this->queueQuickPayment(ConsentStatus::AWAITING_AUTHORISATION);
+        $this->transport->queue(409, ['message' => 'some other conflict']);
+        $this->queueQuickPayment(ConsentStatus::AWAITING_AUTHORISATION);
+
+        try {
+            $this->client()->awaitSuccessfulQuickPayment(self::ID, 1);
+            $this->fail('Expected a ConsentTimeoutException.');
+        } catch (ConsentTimeoutException $exception) {
+            $this->assertStringContainsString('left unrevoked', $exception->getMessage());
+            $this->assertInstanceOf(ConflictException::class, $exception->getPrevious());
         }
     }
 

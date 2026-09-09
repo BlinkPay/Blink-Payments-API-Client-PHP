@@ -25,8 +25,12 @@ interface TokenCacheInterface
     public function get(string $key): ?string;
 
     /**
-     * Stores a value. A null TTL means "no expiry" (used for granted scopes,
-     * which must outlive the token they arrived with).
+     * Stores a value. A null TTL means "no expiry", or the store's default
+     * lifetime where the store imposes one (PSR-6 and PSR-16 both leave that
+     * to the implementation). It is used for the granted scopes, which should
+     * outlive the token they arrived with; if the store expires them anyway,
+     * hasScopes() reports the grant as unknown until the next token fetch,
+     * which is benign.
      */
     public function set(string $key, string $value, ?int $ttlSeconds): void;
 

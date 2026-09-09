@@ -20,7 +20,8 @@ return [
     'sandbox' => env('BLINKPAY_SANDBOX', true),
 
     // Cache store name from config/cache.php used to persist access tokens
-    // between requests; null uses the default store.
+    // between requests; null uses the default store. Prefer a memory store
+    // (redis, memcached, apc): the file store writes bearer tokens to disk.
     'cache_store' => env('BLINKPAY_CACHE_STORE'),
 
     // Request timeout in seconds, covering the token fetch.

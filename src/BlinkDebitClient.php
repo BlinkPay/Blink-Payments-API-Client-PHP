@@ -100,7 +100,10 @@ class BlinkDebitClient
      */
     private const RETRY_DELAYS_MS = [1000, 5000];
 
-    /** A Retry-After longer than this is not worth holding a PHP request open for. */
+    /**
+     * A Retry-After longer than this is not worth holding a PHP request open
+     * for: the retries stop and the caller receives the typed exception.
+     */
     private const MAX_RETRY_AFTER_SECONDS = 30;
 
     /** Interval between status polls in the await helpers. */
@@ -470,6 +473,9 @@ class BlinkDebitClient
      * @throws ConsentTimeoutException  When the gateway timed out, or the wait ran out before authorisation.
      *                                  In the latter case the quick payment is revoked first so it cannot
      *                                  be paid later; a failed revoke is attached as the previous exception.
+     *                                  A revoke refused with 409 means the customer authorised in the gap
+     *                                  since the last poll, so the quick payment is re-read and reported as
+     *                                  settled or as a PaymentTimeoutException instead.
      * @throws PaymentRejectedException When the bank declined the payment; no funds moved.
      * @throws PaymentTimeoutException  When the consent was authorised but the payment had not settled in
      *                                  time. Nothing is revoked: funds may be in flight, so keep polling
@@ -484,41 +490,47 @@ class BlinkDebitClient
         $this->assertUuid($quickPaymentId, self::LABEL_QUICK_PAYMENT_ID);
 
         $lastConsentStatus = null;
+        $isSettled = function (array $quickPayment) use ($quickPaymentId, &$lastConsentStatus): bool {
+            $consent = is_array($quickPayment['consent'] ?? null) ? $quickPayment['consent'] : [];
+            $lastConsentStatus = $consent['status'] ?? null;
+            $this->assertConsentNotTerminal($lastConsentStatus, 'quick payment', $quickPaymentId);
+
+            $paymentStatus = $this->firstPaymentStatus($consent);
+            if ($paymentStatus === PaymentStatus::REJECTED) {
+                throw new PaymentRejectedException(
+                    sprintf('The payment for quick payment %s was rejected by the bank.', $quickPaymentId)
+                );
+            }
+
+            return $paymentStatus === PaymentStatus::ACCEPTED_SETTLEMENT_COMPLETED;
+        };
+
         $result = $this->poll(
             $maxWaitSeconds,
             function () use ($quickPaymentId, $options): array {
                 return $this->getQuickPayment($quickPaymentId, $options);
             },
-            function (array $quickPayment) use ($quickPaymentId, &$lastConsentStatus): bool {
-                $consent = is_array($quickPayment['consent'] ?? null) ? $quickPayment['consent'] : [];
-                $lastConsentStatus = $consent['status'] ?? null;
-                $this->assertConsentNotTerminal($lastConsentStatus, 'quick payment', $quickPaymentId);
-
-                $paymentStatus = $this->firstPaymentStatus($consent);
-                if ($paymentStatus === PaymentStatus::REJECTED) {
-                    throw new PaymentRejectedException(
-                        sprintf('The payment for quick payment %s was rejected by the bank.', $quickPaymentId)
-                    );
-                }
-
-                return $paymentStatus === PaymentStatus::ACCEPTED_SETTLEMENT_COMPLETED;
-            }
+            $isSettled
         );
         if ($result !== null) {
             return $result;
         }
-
-        if ($lastConsentStatus === ConsentStatus::AUTHORISED || $lastConsentStatus === ConsentStatus::CONSUMED) {
-            throw new PaymentTimeoutException(sprintf(
-                'Quick payment %s was authorised but its payment had not settled after %d seconds; keep polling.',
-                $quickPaymentId,
-                $maxWaitSeconds
-            ));
-        }
+        $this->assertQuickPaymentNotAwaitingSettlement($lastConsentStatus, $quickPaymentId, $maxWaitSeconds);
 
         $revokeFailure = null;
         try {
             $this->revokeQuickPayment($quickPaymentId, $options);
+        } catch (ConflictException $exception) {
+            // The consent can no longer be revoked, most likely because the
+            // customer authorised it between the last poll and the revoke, in
+            // which case the debit has been initiated. Re-read before reporting
+            // so a paid customer is never reported as abandoned.
+            $quickPayment = $this->getQuickPayment($quickPaymentId, $options);
+            if ($isSettled($quickPayment)) {
+                return $quickPayment;
+            }
+            $this->assertQuickPaymentNotAwaitingSettlement($lastConsentStatus, $quickPaymentId, $maxWaitSeconds);
+            $revokeFailure = $exception;
         } catch (BlinkDebitApiException $exception) {
             $revokeFailure = $exception;
         }
@@ -534,6 +546,26 @@ class BlinkDebitClient
             null,
             $revokeFailure
         );
+    }
+
+    /**
+     * Throws PaymentTimeoutException when the consent is Authorised or
+     * Consumed, because the payment is then in flight and the quick payment
+     * must not be revoked or reported as abandoned.
+     *
+     * @param mixed $consentStatus
+     *
+     * @throws PaymentTimeoutException
+     */
+    private function assertQuickPaymentNotAwaitingSettlement($consentStatus, string $quickPaymentId, int $maxWaitSeconds): void
+    {
+        if ($consentStatus === ConsentStatus::AUTHORISED || $consentStatus === ConsentStatus::CONSUMED) {
+            throw new PaymentTimeoutException(sprintf(
+                'Quick payment %s was authorised but its payment had not settled after %d seconds; keep polling.',
+                $quickPaymentId,
+                $maxWaitSeconds
+            ));
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1212,6 +1244,12 @@ class BlinkDebitClient
      * they consume an attempt and polling continues; other API errors (a
      * 404, say) propagate at once.
      *
+     * $maxWaitSeconds counts polls, not elapsed time: it is the wall-clock
+     * wait only while every fetch answers promptly. A fetch that times out or
+     * is retried adds its own duration, up to three request timeouts plus the
+     * retry delays per poll, so bound the request timeout when the total wait
+     * matters.
+     *
      * @param callable(): array<string, mixed>     $fetch
      * @param callable(array<string, mixed>): bool $isDone May throw an outcome exception for terminal failures.
      *
@@ -1505,10 +1543,10 @@ class BlinkDebitClient
 
     /**
      * Sends one logical request, retrying a 429 (always), and a 5xx or
-     * transport failure (when $replayable), on the RETRY_DELAYS_MS schedule.
-     * Returns the final response, whatever its status, for the caller to
-     * interpret; rethrows a transport failure only once the attempts are
-     * spent.
+     * transport failure (when $replayable), on the RETRY_DELAYS_MS schedule,
+     * or after a short Retry-After when the server sent one. Returns the
+     * final response, whatever its status, for the caller to interpret;
+     * rethrows a transport failure only once the attempts are spent.
      *
      * @param non-empty-string $method
      * @param list<string>     $headers
@@ -1538,28 +1576,34 @@ class BlinkDebitClient
                 return $response;
             }
 
-            ($this->sleep)($this->retryDelayMs($response, self::RETRY_DELAYS_MS[$attempt]));
+            $delayMs = $this->retryDelayMs($response, self::RETRY_DELAYS_MS[$attempt]);
+            if ($delayMs === null) {
+                return $response;
+            }
+
+            ($this->sleep)($delayMs);
             $attempt++;
         }
     }
 
     /**
-     * Honours a Retry-After header given in seconds when it is short enough
-     * to wait for; otherwise the scheduled delay.
+     * The delay before the next attempt: a Retry-After header given in
+     * seconds when present, otherwise the scheduled delay. Null when the
+     * server asked for a longer wait than a PHP request should hold, so the
+     * caller gives up rather than retrying sooner than asked.
      *
      * @param array{status: int, body: string, headers?: array<string, string>} $response
      */
-    private function retryDelayMs(array $response, int $scheduledMs): int
+    private function retryDelayMs(array $response, int $scheduledMs): ?int
     {
         $retryAfter = $response['headers']['retry-after'] ?? null;
-        if (is_string($retryAfter) && ctype_digit($retryAfter)) {
-            $seconds = (int) $retryAfter;
-            if ($seconds > 0 && $seconds <= self::MAX_RETRY_AFTER_SECONDS) {
-                return $seconds * 1000;
-            }
+        if (!is_string($retryAfter) || !ctype_digit($retryAfter) || (int) $retryAfter <= 0) {
+            return $scheduledMs;
         }
 
-        return $scheduledMs;
+        $seconds = (int) $retryAfter;
+
+        return $seconds <= self::MAX_RETRY_AFTER_SECONDS ? $seconds * 1000 : null;
     }
 
     /**

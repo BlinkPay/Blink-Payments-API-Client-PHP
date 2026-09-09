@@ -17,7 +17,10 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
 /**
  * Symfony bundle (Symfony 6.1+): registers BlinkDebitClient as an autowirable
  * service configured under the `blink_debit` key, with access tokens persisted
- * in a PSR-6 cache pool (`cache.app` by default).
+ * in a PSR-6 cache pool (`cache.app` by default). In a stock application
+ * `cache.app` is the filesystem adapter, which writes bearer tokens to disk;
+ * set `framework.cache.app` to a memory adapter (redis, memcached, apcu) or
+ * point `cache` at a pool that uses one.
  *
  *   # config/packages/blink_debit.yaml
  *   blink_debit:
@@ -57,7 +60,10 @@ final class BlinkDebitBundle extends AbstractBundle
                 ->end()
                 ->scalarNode('cache')
                     ->defaultValue('cache.app')
-                    ->info('Service id of the PSR-6 cache pool that persists access tokens.')
+                    ->info(
+                        'Service id of the PSR-6 cache pool that persists access tokens. Prefer a memory-backed '
+                        . 'pool: the stock cache.app is filesystem-backed and would write bearer tokens to disk.'
+                    )
                 ->end()
                 ->scalarNode('http_client')
                     ->defaultNull()

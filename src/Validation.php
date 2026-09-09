@@ -13,10 +13,12 @@ namespace BlinkPay\BlinkDebit;
  */
 final class Validation
 {
-    private const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+    // The D modifier stops `$` matching before a trailing newline, which would
+    // otherwise let "12.50\n" through and on to the wire.
+    private const UUID_PATTERN = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iD';
 
     /** Spec pattern for monetary totals: up to 13 integer digits and 1-2 decimals. */
-    private const AMOUNT_PATTERN = '/^\d{1,13}\.\d{1,2}$/';
+    private const AMOUNT_PATTERN = '/^\d{1,13}\.\d{1,2}$/D';
 
     private function __construct()
     {

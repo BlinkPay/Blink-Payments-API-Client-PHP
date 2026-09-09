@@ -24,9 +24,13 @@ use Cake\Core\ContainerInterface;
  *       'clientId' => env('BLINKPAY_CLIENT_ID', ''),
  *       'clientSecret' => env('BLINKPAY_CLIENT_SECRET', ''),
  *       'sandbox' => env('BLINKPAY_SANDBOX'),   // parsed by the plugin; unset or blank means sandbox
- *       'cacheConfig' => 'default',   // optional
+ *       'cacheConfig' => 'default',   // optional; prefer a memory engine, see below
  *       'timeout' => 30,              // optional, seconds
  *   ],
+ *
+ * Cake's stock `default` cache config is FileEngine, which writes bearer
+ * tokens to disk. Point `cacheConfig` at a config using RedisEngine,
+ * MemcachedEngine or ApcuEngine instead.
  *
  *   // src/Application.php
  *   $this->addPlugin(\BlinkPay\BlinkDebit\CakePHP\BlinkDebitPlugin::class);

@@ -23,6 +23,11 @@ use Illuminate\Support\ServiceProvider;
  * deferred provider's boot() would never run, which would hide the
  * `blinkpay-config` publish tag from `vendor:publish`.
  *
+ * The store is whatever `cache_store` (BLINKPAY_CACHE_STORE) names, or the
+ * application's default store. Point it at a memory store such as redis,
+ * memcached, apc or array: the `file` store, Laravel's default in older
+ * skeletons, writes bearer tokens to disk.
+ *
  * To substitute the HTTP transport or token cache, bind
  * HttpTransportInterface or TokenCacheInterface in your own provider; this
  * provider uses those bindings when present, otherwise cURL and the

@@ -820,7 +820,7 @@ class BlinkDebitClientTest extends TestCase
     {
         $client = $this->client();
 
-        foreach (['1000', '-1.00', '1,000.00', '12.345', ''] as $amount) {
+        foreach (['1000', '-1.00', '1,000.00', '12.345', '', "12.50\n"] as $amount) {
             try {
                 $client->createPartialRefund(self::PAYMENT_ID, Pcr::build('x'), $amount);
                 $this->fail('Expected the amount to be rejected: ' . $amount);
