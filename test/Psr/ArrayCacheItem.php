@@ -6,14 +6,19 @@ namespace BlinkPay\BlinkDebit\Test\Psr;
 
 use Psr\Cache\CacheItemInterface;
 
+/**
+ * Implements psr/cache v1 (untyped parameters, no return types) so the same
+ * double parses and loads on PHP 7.4, the library's declared floor.
+ */
 class ArrayCacheItem implements CacheItemInterface
 {
     public bool $hit = false;
 
-    public mixed $value = null;
+    /** @var mixed */
+    public $value = null;
 
     /** @var int|\DateInterval|null Last expiresAfter() argument, recorded for assertions. */
-    public mixed $ttl = null;
+    public $ttl = null;
 
     private string $key;
 
@@ -27,7 +32,10 @@ class ArrayCacheItem implements CacheItemInterface
         return $this->key;
     }
 
-    public function get(): mixed
+    /**
+     * @return mixed
+     */
+    public function get()
     {
         return $this->hit ? $this->value : null;
     }
@@ -37,19 +45,28 @@ class ArrayCacheItem implements CacheItemInterface
         return $this->hit;
     }
 
-    public function set(mixed $value): static
+    /**
+     * @param mixed $value
+     */
+    public function set($value): self
     {
         $this->value = $value;
 
         return $this;
     }
 
-    public function expiresAt(?\DateTimeInterface $expiration): static
+    /**
+     * @param \DateTimeInterface|null $expiration
+     */
+    public function expiresAt($expiration): self
     {
         return $this;
     }
 
-    public function expiresAfter(int|\DateInterval|null $time): static
+    /**
+     * @param int|\DateInterval|null $time
+     */
+    public function expiresAfter($time): self
     {
         $this->ttl = $time;
 

@@ -9,15 +9,6 @@ use PHPUnit\Framework\TestCase;
 
 class Psr16TokenCacheTest extends TestCase
 {
-    protected function setUp(): void
-    {
-        // The in-memory doubles implement the PHP 8 (v3) PSR interfaces, which
-        // a PHP 7.4 install resolves to v1 instead.
-        if (PHP_VERSION_ID < 80000) {
-            $this->markTestSkipped('PSR cache doubles require PHP 8.');
-        }
-    }
-
     public function testValuesArePrefixedAndTtlForwarded(): void
     {
         $store = new ArraySimpleCache();

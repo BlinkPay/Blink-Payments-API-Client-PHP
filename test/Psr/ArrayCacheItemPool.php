@@ -9,17 +9,28 @@ use Psr\Cache\CacheItemPoolInterface;
 
 /**
  * Minimal PSR-6 pool recording expiry, standing in for Symfony Cache.
+ *
+ * Implements psr/cache v1 (untyped `$key` parameters, no return types) so the
+ * same double parses and loads on PHP 7.4, the library's declared floor.
  */
 class ArrayCacheItemPool implements CacheItemPoolInterface
 {
     /** @var array<string, ArrayCacheItem> */
     public array $items = [];
 
-    public function getItem(string $key): CacheItemInterface
+    /**
+     * @param string $key
+     */
+    public function getItem($key): CacheItemInterface
     {
         return $this->items[$key] ?? new ArrayCacheItem($key);
     }
 
+    /**
+     * @param array<string> $keys
+     *
+     * @return iterable<string, CacheItemInterface>
+     */
     public function getItems(array $keys = []): iterable
     {
         $result = [];
@@ -30,7 +41,10 @@ class ArrayCacheItemPool implements CacheItemPoolInterface
         return $result;
     }
 
-    public function hasItem(string $key): bool
+    /**
+     * @param string $key
+     */
+    public function hasItem($key): bool
     {
         return isset($this->items[$key]) && $this->items[$key]->isHit();
     }
@@ -42,13 +56,19 @@ class ArrayCacheItemPool implements CacheItemPoolInterface
         return true;
     }
 
-    public function deleteItem(string $key): bool
+    /**
+     * @param string $key
+     */
+    public function deleteItem($key): bool
     {
         unset($this->items[$key]);
 
         return true;
     }
 
+    /**
+     * @param array<string> $keys
+     */
     public function deleteItems(array $keys): bool
     {
         foreach ($keys as $key) {

@@ -8,21 +8,35 @@ use Psr\SimpleCache\CacheInterface;
 
 /**
  * Minimal PSR-16 store recording TTLs, standing in for a framework cache.
+ *
+ * Implements psr/simple-cache v1 (untyped parameters, no return types) so the
+ * same double parses and loads on PHP 7.4, the library's declared floor.
  */
 class ArraySimpleCache implements CacheInterface
 {
     /** @var array<string, mixed> */
     public array $values = [];
 
-    /** @var array<string, mixed> */
+    /** @var array<string, int|\DateInterval|null> */
     public array $ttls = [];
 
-    public function get(string $key, mixed $default = null): mixed
+    /**
+     * @param string $key
+     * @param mixed  $default
+     *
+     * @return mixed
+     */
+    public function get($key, $default = null)
     {
         return $this->values[$key] ?? $default;
     }
 
-    public function set(string $key, mixed $value, null|int|\DateInterval $ttl = null): bool
+    /**
+     * @param string                 $key
+     * @param mixed                  $value
+     * @param int|\DateInterval|null $ttl
+     */
+    public function set($key, $value, $ttl = null): bool
     {
         $this->values[$key] = $value;
         $this->ttls[$key] = $ttl;
@@ -30,7 +44,10 @@ class ArraySimpleCache implements CacheInterface
         return true;
     }
 
-    public function delete(string $key): bool
+    /**
+     * @param string $key
+     */
+    public function delete($key): bool
     {
         unset($this->values[$key], $this->ttls[$key]);
 
@@ -45,7 +62,13 @@ class ArraySimpleCache implements CacheInterface
         return true;
     }
 
-    public function getMultiple(iterable $keys, mixed $default = null): iterable
+    /**
+     * @param iterable<string> $keys
+     * @param mixed            $default
+     *
+     * @return iterable<string, mixed>
+     */
+    public function getMultiple($keys, $default = null): iterable
     {
         $result = [];
         foreach ($keys as $key) {
@@ -55,7 +78,11 @@ class ArraySimpleCache implements CacheInterface
         return $result;
     }
 
-    public function setMultiple(iterable $values, null|int|\DateInterval $ttl = null): bool
+    /**
+     * @param iterable<string, mixed> $values
+     * @param int|\DateInterval|null  $ttl
+     */
+    public function setMultiple($values, $ttl = null): bool
     {
         foreach ($values as $key => $value) {
             $this->set($key, $value, $ttl);
@@ -64,7 +91,10 @@ class ArraySimpleCache implements CacheInterface
         return true;
     }
 
-    public function deleteMultiple(iterable $keys): bool
+    /**
+     * @param iterable<string> $keys
+     */
+    public function deleteMultiple($keys): bool
     {
         foreach ($keys as $key) {
             $this->delete($key);
@@ -73,7 +103,10 @@ class ArraySimpleCache implements CacheInterface
         return true;
     }
 
-    public function has(string $key): bool
+    /**
+     * @param string $key
+     */
+    public function has($key): bool
     {
         return array_key_exists($key, $this->values);
     }
