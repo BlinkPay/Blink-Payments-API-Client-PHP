@@ -1,0 +1,37 @@
+name: Deploy
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+jobs:
+  packagist_update:
+    runs-on: ubuntu-latest
+    if: github.event.release.target_commitish == 'master'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: curl, json
+          coverage: none
+      - name: Validate composer.json
+        run: composer validate --strict
+      - name: Verify the release tag is a version
+        run: |
+          case "${{ github.event.release.tag_name }}" in
+            [0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*) echo "Releasing ${{ github.event.release.tag_name }}" ;;
+            *) echo "Release tag must be semantic, e.g. 1.2.3"; exit 1 ;;
+          esac
+      - name: Notify Packagist
+        # Packagist reads versions from git tags, so publishing is a metadata refresh rather than an upload.
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+        run: |
+          curl --fail --silent --show-error -X POST \
+            -H 'Content-Type: application/json' \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_TOKEN}" \
+            -d '{"repository":{"url":"https://github.com/${{ github.repository }}"}}'

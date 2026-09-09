@@ -1,0 +1,9 @@
+parameters:
+    level: 8
+    paths:
+        - src
+    excludePaths:
+        # Framework glue references classes that are deliberately not installed here.
+        - src/Laravel
+        - src/Symfony
+        - src/CakePHP
