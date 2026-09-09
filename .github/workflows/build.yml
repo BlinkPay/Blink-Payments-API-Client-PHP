@@ -156,7 +156,7 @@ jobs:
       - name: Install packages
         run: composer update --no-interaction --no-progress --prefer-dist
       - name: Test with coverage
-        run: vendor/bin/phpunit --coverage-clover build/coverage.xml --log-junit build/junit.xml
+        run: vendor/bin/phpunit --coverage-filter src --coverage-clover build/coverage.xml --log-junit build/junit.xml
       - name: Run Sonar
         # Gates the build. Skipped on pull requests from forks, which cannot read the token.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
