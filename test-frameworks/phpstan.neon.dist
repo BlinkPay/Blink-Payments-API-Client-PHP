@@ -1,0 +1,9 @@
+# Analyses the framework glue with the frameworks actually installed. The
+# library's own phpstan.neon.dist excludes these directories because Laravel,
+# Symfony and CakePHP are not dev dependencies there.
+parameters:
+    level: 8
+    paths:
+        - ../src/Laravel
+        - ../src/Symfony
+        - ../src/CakePHP

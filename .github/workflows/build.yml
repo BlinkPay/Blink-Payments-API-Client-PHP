@@ -1,0 +1,172 @@
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+jobs:
+  snyk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: curl, json
+          coverage: none
+      - name: Cache Composer packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-
+      - name: Install packages
+        run: composer update --no-interaction --no-progress --prefer-dist
+      - name: Run Snyk to check for vulnerabilities
+        # Pinned to a commit rather than @master so the action cannot change under us.
+        uses: snyk/actions/php@12140f4059e244892ae643824a95459a102120dd
+        with:
+          command: monitor
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+          SNYK_ORG: blinkpay-zw9
+          SNYK_PROJECT_NAME: Blink-Payments-API-Client-PHP
+        continue-on-error: true
+
+  static_analysis:
+    needs: snyk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: curl, json
+          coverage: none
+      - name: Cache Composer packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-
+      - name: Install packages
+        run: composer update --no-interaction --no-progress --prefer-dist
+      - name: Validate composer.json
+        run: composer validate --strict
+      - name: Run PHPStan
+        run: composer analyse
+
+  build_test:
+    needs: static_analysis
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 7.4 is the declared floor; 8.x covers every supported release line, so a
+        # deprecation in a new PHP release surfaces here rather than in production.
+        php-version: [ '7.4', '8.1', '8.2', '8.3', '8.4', '8.5' ]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup PHP ${{ matrix.php-version }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          # apcu backs the default token cache; enabling it for the CLI lets its tests run.
+          extensions: curl, json, apcu
+          ini-values: apc.enable_cli=1
+          coverage: none
+      - name: Cache Composer packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-${{ matrix.php-version }}-${{ hashFiles('**/composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-${{ matrix.php-version }}-
+      - name: Install packages
+        # composer.lock is not committed for a library; resolve the highest set the runtime allows.
+        run: composer update --no-interaction --no-progress --prefer-dist
+      - name: Lint
+        run: find src test config -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
+      - name: Test
+        run: vendor/bin/phpunit
+
+  framework_glue:
+    # Boots the real Laravel, Symfony and CakePHP containers against the
+    # provider, bundle and plugin in src/, and runs PHPStan over that glue
+    # with the frameworks installed (the main analysis job excludes it).
+    needs: static_analysis
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: [ '8.3', '8.4' ]
+    defaults:
+      run:
+        working-directory: test-frameworks
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup PHP ${{ matrix.php-version }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: curl, json, intl, mbstring
+          coverage: none
+      - name: Cache Composer packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-frameworks-${{ matrix.php-version }}-${{ hashFiles('test-frameworks/composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-frameworks-${{ matrix.php-version }}-
+      - name: Install frameworks
+        run: composer update --no-interaction --no-progress --prefer-dist
+      - name: Analyse the framework glue
+        run: composer analyse
+      - name: Boot the containers
+        run: composer test
+
+  sonar:
+    needs: [ build_test, framework_glue ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history so SonarCloud can attribute new code accurately
+          fetch-depth: 0
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: curl, json
+          coverage: pcov
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+      - name: Cache Composer packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-
+      - name: Install packages
+        run: composer update --no-interaction --no-progress --prefer-dist
+      - name: Test with coverage
+        run: vendor/bin/phpunit --coverage-filter src --coverage-clover build/coverage.xml --log-junit build/junit.xml
+      - name: Run Sonar
+        # Gates the build. Skipped on pull requests from forks, which cannot read the token.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: sonarsource/sonarqube-scan-action@v8
+        with:
+          projectBaseDir: .
+          args: >
+            -Dsonar.projectKey=blink-debit-api-client-php
+            -Dsonar.organization=blinkpay
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io

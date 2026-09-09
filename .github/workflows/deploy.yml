@@ -1,0 +1,48 @@
+name: Deploy
+
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+
+jobs:
+  packagist_update:
+    runs-on: ubuntu-latest
+    # Releases must be cut from master; a manual dispatch runs from whichever ref it was started on.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.target_commitish == 'master'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: curl, json
+          coverage: none
+      - name: Validate composer.json
+        run: composer validate --strict
+      - name: Verify the release tag is a version and matches BlinkDebitClient::VERSION
+        if: github.event_name == 'release'
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          case "$TAG" in
+            [0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "Release tag must be semantic, e.g. 1.2.3"; exit 1 ;;
+          esac
+          # VERSION is hand-maintained and sent in the User-Agent, so it must not drift from the tag.
+          sdk_version="$(sed -n "s/.*public const VERSION = '\([^']*\)'.*/\1/p" src/BlinkDebitClient.php)"
+          if [ "${TAG#v}" != "$sdk_version" ]; then
+            echo "Release tag $TAG does not match BlinkDebitClient::VERSION ($sdk_version); bump the constant first."
+            exit 1
+          fi
+          echo "Releasing $TAG"
+      - name: Notify Packagist
+        # Packagist reads versions from git tags, so publishing is a metadata refresh rather than an upload.
+        env:
+          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
+          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+        run: |
+          curl --fail --silent --show-error -X POST \
+            -H 'Content-Type: application/json' \
+            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_TOKEN}" \
+            -d '{"repository":{"url":"https://github.com/${{ github.repository }}"}}'
