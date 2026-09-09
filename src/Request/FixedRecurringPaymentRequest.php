@@ -14,6 +14,7 @@ final class FixedRecurringPaymentRequest
 {
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 
     /**

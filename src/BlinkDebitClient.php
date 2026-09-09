@@ -85,6 +85,14 @@ class BlinkDebitClient
 
     private const API_PATH_PREFIX = '/payments/v1';
 
+    /** Labels for the resource identifiers validated before a request is sent. */
+    private const LABEL_CONSENT_ID = 'consent ID';
+    private const LABEL_PAYMENT_ID = 'payment ID';
+    private const LABEL_QUICK_PAYMENT_ID = 'quick payment ID';
+    private const LABEL_FIXED_RECURRING_PAYMENT_ID = 'fixed recurring payment ID';
+    private const LABEL_REFUND_ID = 'refund ID';
+    private const LABEL_SUBSCRIPTION_ID = 'subscription ID';
+
     /**
      * Delays before the second and third attempt at a request that met a
      * 429, a 5xx or a transport failure: three attempts in total, the same
@@ -418,7 +426,7 @@ class BlinkDebitClient
      */
     public function getQuickPayment(string $quickPaymentId, ?RequestOptions $options = null): array
     {
-        $this->assertUuid($quickPaymentId, 'quick payment ID');
+        $this->assertUuid($quickPaymentId, self::LABEL_QUICK_PAYMENT_ID);
 
         return $this->request(
             'GET',
@@ -436,7 +444,7 @@ class BlinkDebitClient
      */
     public function revokeQuickPayment(string $quickPaymentId, ?RequestOptions $options = null): void
     {
-        $this->assertUuid($quickPaymentId, 'quick payment ID');
+        $this->assertUuid($quickPaymentId, self::LABEL_QUICK_PAYMENT_ID);
 
         $this->request(
             'DELETE',
@@ -473,7 +481,7 @@ class BlinkDebitClient
         int $maxWaitSeconds,
         ?RequestOptions $options = null
     ): array {
-        $this->assertUuid($quickPaymentId, 'quick payment ID');
+        $this->assertUuid($quickPaymentId, self::LABEL_QUICK_PAYMENT_ID);
 
         $lastConsentStatus = null;
         $result = $this->poll(
@@ -583,7 +591,7 @@ class BlinkDebitClient
      */
     public function getSingleConsent(string $consentId, ?RequestOptions $options = null): array
     {
-        $this->assertUuid($consentId, 'consent ID');
+        $this->assertUuid($consentId, self::LABEL_CONSENT_ID);
 
         return $this->request('GET', '/single-consents/' . rawurlencode($consentId), null, $this->headersFor($options));
     }
@@ -593,7 +601,7 @@ class BlinkDebitClient
      */
     public function revokeSingleConsent(string $consentId, ?RequestOptions $options = null): void
     {
-        $this->assertUuid($consentId, 'consent ID');
+        $this->assertUuid($consentId, self::LABEL_CONSENT_ID);
 
         $this->request('DELETE', '/single-consents/' . rawurlencode($consentId), null, $this->headersFor($options));
     }
@@ -615,7 +623,7 @@ class BlinkDebitClient
         int $maxWaitSeconds,
         ?RequestOptions $options = null
     ): array {
-        $this->assertUuid($consentId, 'consent ID');
+        $this->assertUuid($consentId, self::LABEL_CONSENT_ID);
 
         $result = $this->poll(
             $maxWaitSeconds,
@@ -664,7 +672,7 @@ class BlinkDebitClient
      */
     public function getEnduringConsent(string $consentId, ?RequestOptions $options = null): array
     {
-        $this->assertUuid($consentId, 'consent ID');
+        $this->assertUuid($consentId, self::LABEL_CONSENT_ID);
 
         return $this->request('GET', '/enduring-consents/' . rawurlencode($consentId), null, $this->headersFor($options));
     }
@@ -674,7 +682,7 @@ class BlinkDebitClient
      */
     public function revokeEnduringConsent(string $consentId, ?RequestOptions $options = null): void
     {
-        $this->assertUuid($consentId, 'consent ID');
+        $this->assertUuid($consentId, self::LABEL_CONSENT_ID);
 
         $this->request('DELETE', '/enduring-consents/' . rawurlencode($consentId), null, $this->headersFor($options));
     }
@@ -697,7 +705,7 @@ class BlinkDebitClient
         int $maxWaitSeconds,
         ?RequestOptions $options = null
     ): array {
-        $this->assertUuid($consentId, 'consent ID');
+        $this->assertUuid($consentId, self::LABEL_CONSENT_ID);
 
         $result = $this->poll(
             $maxWaitSeconds,
@@ -771,7 +779,7 @@ class BlinkDebitClient
      */
     public function getFixedRecurringPayment(string $fixedRecurringPaymentId, ?RequestOptions $options = null): array
     {
-        $this->assertUuid($fixedRecurringPaymentId, 'fixed recurring payment ID');
+        $this->assertUuid($fixedRecurringPaymentId, self::LABEL_FIXED_RECURRING_PAYMENT_ID);
 
         return $this->request(
             'GET',
@@ -789,7 +797,7 @@ class BlinkDebitClient
      */
     public function cancelFixedRecurringPayment(string $fixedRecurringPaymentId, ?RequestOptions $options = null): void
     {
-        $this->assertUuid($fixedRecurringPaymentId, 'fixed recurring payment ID');
+        $this->assertUuid($fixedRecurringPaymentId, self::LABEL_FIXED_RECURRING_PAYMENT_ID);
 
         $this->request(
             'DELETE',
@@ -838,7 +846,7 @@ class BlinkDebitClient
         string $idempotencyKey,
         ?RequestOptions $options = null
     ): array {
-        $this->assertUuid($consentId, 'consent ID');
+        $this->assertUuid($consentId, self::LABEL_CONSENT_ID);
 
         return $this->createPayment(['consent_id' => $consentId], $idempotencyKey, $options);
     }
@@ -861,7 +869,7 @@ class BlinkDebitClient
         string $idempotencyKey,
         ?RequestOptions $options = null
     ): array {
-        $this->assertUuid($consentId, 'consent ID');
+        $this->assertUuid($consentId, self::LABEL_CONSENT_ID);
 
         return $this->createPayment(
             [
@@ -883,7 +891,7 @@ class BlinkDebitClient
      */
     public function getPayment(string $paymentId, ?RequestOptions $options = null): array
     {
-        $this->assertUuid($paymentId, 'payment ID');
+        $this->assertUuid($paymentId, self::LABEL_PAYMENT_ID);
 
         return $this->request('GET', '/payments/' . rawurlencode($paymentId), null, $this->headersFor($options));
     }
@@ -902,7 +910,7 @@ class BlinkDebitClient
      */
     public function awaitSuccessfulPayment(string $paymentId, int $maxWaitSeconds, ?RequestOptions $options = null): array
     {
-        $this->assertUuid($paymentId, 'payment ID');
+        $this->assertUuid($paymentId, self::LABEL_PAYMENT_ID);
 
         $result = $this->poll(
             $maxWaitSeconds,
@@ -953,7 +961,7 @@ class BlinkDebitClient
         ?string $idempotencyKey = null,
         ?RequestOptions $options = null
     ): array {
-        $this->assertUuid($paymentId, 'payment ID');
+        $this->assertUuid($paymentId, self::LABEL_PAYMENT_ID);
 
         return $this->createRefund([
             'type' => RefundType::FULL_REFUND,
@@ -983,7 +991,7 @@ class BlinkDebitClient
         ?string $idempotencyKey = null,
         ?RequestOptions $options = null
     ): array {
-        $this->assertUuid($paymentId, 'payment ID');
+        $this->assertUuid($paymentId, self::LABEL_PAYMENT_ID);
 
         return $this->createRefund([
             'type' => RefundType::PARTIAL_REFUND,
@@ -1010,7 +1018,7 @@ class BlinkDebitClient
         ?string $idempotencyKey = null,
         ?RequestOptions $options = null
     ): array {
-        $this->assertUuid($paymentId, 'payment ID');
+        $this->assertUuid($paymentId, self::LABEL_PAYMENT_ID);
 
         return $this->createRefund([
             'type' => RefundType::ACCOUNT_NUMBER,
@@ -1037,7 +1045,7 @@ class BlinkDebitClient
     public function createRefund(array $payload, ?string $idempotencyKey = null, ?RequestOptions $options = null): array
     {
         if (isset($payload['payment_id']) && is_string($payload['payment_id'])) {
-            $this->assertUuid($payload['payment_id'], 'payment ID');
+            $this->assertUuid($payload['payment_id'], self::LABEL_PAYMENT_ID);
         }
 
         return $this->request('POST', '/refunds', $payload, $this->headersFor($options, $idempotencyKey));
@@ -1055,7 +1063,7 @@ class BlinkDebitClient
      */
     public function getRefund(string $refundId, ?RequestOptions $options = null): array
     {
-        $this->assertUuid($refundId, 'refund ID');
+        $this->assertUuid($refundId, self::LABEL_REFUND_ID);
 
         return $this->request('GET', '/refunds/' . rawurlencode($refundId), null, $this->headersFor($options));
     }
@@ -1188,7 +1196,7 @@ class BlinkDebitClient
      */
     public function deleteSubscription(string $subscriptionId, ?RequestOptions $options = null): void
     {
-        $this->assertUuid($subscriptionId, 'subscription ID');
+        $this->assertUuid($subscriptionId, self::LABEL_SUBSCRIPTION_ID);
 
         $this->request('DELETE', '/subscriptions/' . rawurlencode($subscriptionId), null, $this->tracingHeadersFor($options));
     }

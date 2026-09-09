@@ -13,6 +13,7 @@ final class EnduringConsentRequest
 {
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 
     /**

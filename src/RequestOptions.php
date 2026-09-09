@@ -29,6 +29,7 @@ final class RequestOptions
 
     private function __construct()
     {
+        // Instances are built through create().
     }
 
     public static function create(): self

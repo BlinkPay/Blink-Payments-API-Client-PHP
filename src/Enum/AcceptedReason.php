@@ -16,5 +16,6 @@ final class AcceptedReason
 
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 }

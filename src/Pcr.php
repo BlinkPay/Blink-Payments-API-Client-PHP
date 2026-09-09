@@ -24,6 +24,7 @@ final class Pcr
 
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 
     /**

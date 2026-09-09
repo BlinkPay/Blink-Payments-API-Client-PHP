@@ -20,5 +20,6 @@ final class ConsentStatus
 
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 }

@@ -12,6 +12,7 @@ final class SingleConsentRequest
 {
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 
     /**

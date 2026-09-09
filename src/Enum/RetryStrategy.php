@@ -15,5 +15,6 @@ final class RetryStrategy
 
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 }

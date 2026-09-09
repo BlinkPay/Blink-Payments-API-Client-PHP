@@ -18,5 +18,6 @@ final class Period
 
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 }

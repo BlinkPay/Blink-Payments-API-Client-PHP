@@ -14,6 +14,7 @@ final class Uuid
 {
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 
     public static function v4(): string

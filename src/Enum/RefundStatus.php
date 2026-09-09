@@ -15,5 +15,6 @@ final class RefundStatus
 
     private function __construct()
     {
+        // Static-only class: not meant to be instantiated.
     }
 }
