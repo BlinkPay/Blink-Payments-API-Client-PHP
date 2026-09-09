@@ -1,0 +1,42 @@
+{
+    "name": "blinkpay/blink-debit-api-client-php-framework-tests",
+    "description": "Boots the real Laravel, Symfony and CakePHP containers against the Laravel provider, Symfony bundle and CakePHP plugin shipped in ../src. Kept out of the library's own dev dependencies so they stay small and PHP 7.4 compatible.",
+    "type": "project",
+    "license": "MIT",
+    "repositories": [
+        {
+            "type": "path",
+            "url": "..",
+            "options": { "symlink": true }
+        }
+    ],
+    "require": {
+        "php": "^8.2"
+    },
+    "require-dev": {
+        "blinkpay/blink-debit-api-client-php": "@dev",
+        "phpunit/phpunit": "^11.0",
+        "phpstan/phpstan": "^2.0",
+        "nyholm/psr7": "^1.8",
+        "orchestra/testbench": "^9.0 || ^10.0",
+        "symfony/framework-bundle": "^7.0",
+        "symfony/yaml": "^7.0",
+        "symfony/cache": "^7.0",
+        "cakephp/cakephp": "^5.0"
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "BlinkPay\\BlinkDebit\\FrameworkTest\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "php-http/discovery": false
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse --no-progress"
+    }
+}

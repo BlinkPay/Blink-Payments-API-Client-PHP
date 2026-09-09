@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace BlinkPay\BlinkDebit\Psr;
 
-use BlinkPay\BlinkDebit\BlinkDebitApiException;
+use BlinkPay\BlinkDebit\Exception\TransportException;
 use BlinkPay\BlinkDebit\HttpTransportInterface;
 use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;
@@ -64,16 +64,23 @@ class Psr18Transport implements HttpTransportInterface
         try {
             $response = $this->client->sendRequest($request);
         } catch (ClientExceptionInterface $exception) {
-            throw new BlinkDebitApiException(
+            throw new TransportException(
                 sprintf('The Blink Debit API could not be reached: %s', $exception->getMessage()),
                 0,
-                null
+                null,
+                $exception
             );
+        }
+
+        $responseHeaders = [];
+        foreach ($response->getHeaders() as $name => $values) {
+            $responseHeaders[strtolower((string) $name)] = implode(', ', $values);
         }
 
         return [
             'status' => $response->getStatusCode(),
             'body' => (string) $response->getBody(),
+            'headers' => $responseHeaders,
         ];
     }
 }

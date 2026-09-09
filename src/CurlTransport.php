@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace BlinkPay\BlinkDebit;
 
+use BlinkPay\BlinkDebit\Exception\TransportException;
+
 /**
  * Default transport using ext-curl, so the library carries no runtime
  * Composer dependencies and cannot clash with a platform's pinned HTTP stack.
@@ -16,10 +18,20 @@ class CurlTransport implements HttpTransportInterface
     {
         $handle = curl_init($url);
         if ($handle === false) {
-            throw new BlinkDebitApiException('Unable to initialise the HTTP client.');
+            throw new TransportException('Unable to initialise the HTTP client.');
         }
 
+        /** @var array<string, string> $responseHeaders */
+        $responseHeaders = [];
         curl_setopt_array($handle, [
+            CURLOPT_HEADERFUNCTION => static function ($handle, string $line) use (&$responseHeaders): int {
+                $pair = explode(':', $line, 2);
+                if (count($pair) === 2) {
+                    $responseHeaders[strtolower(trim($pair[0]))] = trim($pair[1]);
+                }
+
+                return strlen($line);
+            },
             CURLOPT_CUSTOMREQUEST => $method,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HTTPHEADER => $headers,
@@ -40,12 +52,13 @@ class CurlTransport implements HttpTransportInterface
         curl_close($handle);
 
         if ($responseBody === false) {
-            throw new BlinkDebitApiException(sprintf('The Blink Debit API could not be reached: %s', $curlError));
+            throw new TransportException(sprintf('The Blink Debit API could not be reached: %s', $curlError));
         }
 
         return [
             'status' => $statusCode,
             'body' => (string) $responseBody,
+            'headers' => $responseHeaders,
         ];
     }
 }

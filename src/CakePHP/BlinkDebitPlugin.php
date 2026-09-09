@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BlinkPay\BlinkDebit\CakePHP;
 
 use BlinkPay\BlinkDebit\BlinkDebitClient;
+use BlinkPay\BlinkDebit\Env;
 use BlinkPay\BlinkDebit\HttpTransportInterface;
 use BlinkPay\BlinkDebit\Psr\Psr16TokenCache;
 use BlinkPay\BlinkDebit\TokenCacheInterface;
@@ -22,7 +23,7 @@ use Cake\Core\ContainerInterface;
  *   'BlinkPay' => [
  *       'clientId' => env('BLINKPAY_CLIENT_ID', ''),
  *       'clientSecret' => env('BLINKPAY_CLIENT_SECRET', ''),
- *       'sandbox' => filter_var(env('BLINKPAY_SANDBOX', true), FILTER_VALIDATE_BOOLEAN),
+ *       'sandbox' => env('BLINKPAY_SANDBOX'),   // parsed by the plugin; unset or blank means sandbox
  *       'cacheConfig' => 'default',   // optional
  *       'timeout' => 30,              // optional, seconds
  *   ],
@@ -75,7 +76,7 @@ class BlinkDebitPlugin extends BasePlugin
             $client = new BlinkDebitClient(
                 (string) ($config['clientId'] ?? ''),
                 (string) ($config['clientSecret'] ?? ''),
-                (bool) ($config['sandbox'] ?? true),
+                Env::bool($config['sandbox'] ?? null, true),
                 $tokenCache,
                 $transport
             );

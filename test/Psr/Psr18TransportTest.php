@@ -47,7 +47,9 @@ class Psr18TransportTest extends TestCase
 
     public function testRequestIsTranslatedToPsr7AndResponseBack(): void
     {
-        $transport = $this->transport(static fn (): ResponseInterface => new Response(201, [], '{"payment_id":"p1"}'));
+        $transport = $this->transport(
+            static fn (): ResponseInterface => new Response(201, ['Retry-After' => '3'], '{"payment_id":"p1"}')
+        );
 
         $result = $transport->send(
             'POST',
@@ -57,7 +59,7 @@ class Psr18TransportTest extends TestCase
             30
         );
 
-        $this->assertSame(['status' => 201, 'body' => '{"payment_id":"p1"}'], $result);
+        $this->assertSame(['status' => 201, 'body' => '{"payment_id":"p1"}', 'headers' => ['retry-after' => '3']], $result);
         $request = $this->sent[0];
         $this->assertSame('POST', $request->getMethod());
         $this->assertSame('https://sandbox.debit.blinkpay.co.nz/payments/v1/payments', (string) $request->getUri());
@@ -72,7 +74,7 @@ class Psr18TransportTest extends TestCase
 
         $result = $transport->send('DELETE', 'https://example.test/x', [], null, 30);
 
-        $this->assertSame(['status' => 204, 'body' => ''], $result);
+        $this->assertSame(['status' => 204, 'body' => '', 'headers' => []], $result);
         $this->assertSame('', (string) $this->sent[0]->getBody());
     }
 

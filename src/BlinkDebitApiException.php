@@ -7,7 +7,10 @@ namespace BlinkPay\BlinkDebit;
 use RuntimeException;
 
 /**
- * Raised for transport failures and non-2xx Blink Debit API responses.
+ * Base class for every failure the SDK raises: local validation (status 0),
+ * transport failures ({@see Exception\TransportException}), non-2xx API
+ * responses (mapped to the subclasses in the Exception namespace by HTTP
+ * status) and the outcome exceptions thrown by the await helpers.
  *
  * The message is safe to log and show to a merchant-facing admin screen:
  * it carries the API's own error message and status code, never credentials,
@@ -24,9 +27,13 @@ class BlinkDebitApiException extends RuntimeException
     /**
      * @param array<string, mixed>|null $responseBody
      */
-    public function __construct(string $message, int $statusCode = 0, ?array $responseBody = null)
-    {
-        parent::__construct($message, $statusCode);
+    public function __construct(
+        string $message,
+        int $statusCode = 0,
+        ?array $responseBody = null,
+        ?\Throwable $previous = null
+    ) {
+        parent::__construct($message, $statusCode, $previous);
         $this->statusCode = $statusCode;
         $this->responseBody = $responseBody;
     }
@@ -42,5 +49,15 @@ class BlinkDebitApiException extends RuntimeException
     public function getResponseBody(): ?array
     {
         return $this->responseBody;
+    }
+
+    /**
+     * The API's BPxxx error code, when the response carried one.
+     */
+    public function getErrorCode(): ?string
+    {
+        $code = $this->responseBody['code'] ?? null;
+
+        return is_scalar($code) ? (string) $code : null;
     }
 }

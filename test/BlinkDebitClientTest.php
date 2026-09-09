@@ -6,6 +6,13 @@ namespace BlinkPay\BlinkDebit\Test;
 
 use BlinkPay\BlinkDebit\BlinkDebitApiException;
 use BlinkPay\BlinkDebit\BlinkDebitClient;
+use BlinkPay\BlinkDebit\Exception\ConflictException;
+use BlinkPay\BlinkDebit\Exception\ForbiddenException;
+use BlinkPay\BlinkDebit\Exception\RateLimitExceededException;
+use BlinkPay\BlinkDebit\Exception\ResourceNotFoundException;
+use BlinkPay\BlinkDebit\Exception\ServerErrorException;
+use BlinkPay\BlinkDebit\Exception\TransportException;
+use BlinkPay\BlinkDebit\Exception\UnauthorisedException;
 use BlinkPay\BlinkDebit\InMemoryTokenCache;
 use BlinkPay\BlinkDebit\Pcr;
 use BlinkPay\BlinkDebit\RequestOptions;
@@ -15,14 +22,23 @@ class BlinkDebitClientTest extends TestCase
 {
     private FakeTransport $transport;
 
+    /** @var list<int> Milliseconds the client asked to sleep, in order. */
+    private array $sleeps = [];
+
     protected function setUp(): void
     {
         $this->transport = new FakeTransport();
+        $this->sleeps = [];
     }
 
     private function client(bool $sandbox = true): BlinkDebitClient
     {
-        return new BlinkDebitClient('client-id', 'client-secret', $sandbox, new InMemoryTokenCache(), $this->transport);
+        $client = new BlinkDebitClient('client-id', 'client-secret', $sandbox, new InMemoryTokenCache(), $this->transport);
+        $client->setSleep(function (int $milliseconds): void {
+            $this->sleeps[] = $milliseconds;
+        });
+
+        return $client;
     }
 
     private function queueToken(string $token = 'token-1', string $scope = 'create:quick_payment view:quick_payment'): void
@@ -103,7 +119,7 @@ class BlinkDebitClientTest extends TestCase
         $client->createGatewayQuickPayment(
             '12.50',
             'https://shop.example/return',
-            Pcr::build('My Shop', '1005'),
+            Pcr::build('My Shop', '', '1005'),
             self::IDEM,
             hash('sha256', 'customer@example.com')
         );
@@ -152,7 +168,7 @@ class BlinkDebitClientTest extends TestCase
         $this->queueToken();
         $this->transport->queue(201, ['refund_id' => 'rf-1']);
 
-        $client->createFullRefund(self::PAYMENT_ID, Pcr::build('My Shop', '1005'));
+        $client->createFullRefund(self::PAYMENT_ID, Pcr::build('My Shop', '', '1005'));
 
         $request = $this->transport->lastRequest();
         $this->assertSame('https://sandbox.debit.blinkpay.co.nz/payments/v1/refunds', $request['url']);
@@ -325,7 +341,7 @@ class BlinkDebitClientTest extends TestCase
         $this->queueToken();
         $this->transport->queue(201, ['consent_id' => self::UUID, 'redirect_uri' => 'https://pay']);
 
-        $client->createGatewaySingleConsent('12.50', 'https://shop.example/return', Pcr::build('My Shop', '1005'), self::IDEM);
+        $client->createGatewaySingleConsent('12.50', 'https://shop.example/return', Pcr::build('My Shop', '', '1005'), self::IDEM);
 
         $request = $this->transport->lastRequest();
         $this->assertSame('https://sandbox.debit.blinkpay.co.nz/payments/v1/single-consents', $request['url']);
@@ -393,7 +409,7 @@ class BlinkDebitClientTest extends TestCase
         $payload = [
             'consent_id' => self::UUID,
             'amount' => ['currency' => 'NZD', 'total' => '25.00'],
-            'pcr' => Pcr::build('Gym', 'Member 1'),
+            'pcr' => Pcr::build('Gym', '', 'Member 1'),
             'retry_strategy' => 'same_day',
         ];
         $created = $client->createFixedRecurringPayment($payload, self::IDEM);
@@ -431,7 +447,7 @@ class BlinkDebitClientTest extends TestCase
         $this->queueToken();
         $this->transport->queue(201, ['payment_id' => self::UUID]);
 
-        $client->createEnduringConsentPayment(self::UUID, '19.99', Pcr::build('Gym', 'Oct'), self::IDEM);
+        $client->createEnduringConsentPayment(self::UUID, '19.99', Pcr::build('Gym', '', 'Oct'), self::IDEM);
 
         $this->assertSame(
             [
@@ -621,7 +637,11 @@ class BlinkDebitClientTest extends TestCase
         $client->cancelFixedRecurringPayment(self::UUID, $options);
         $client->getTransactions('2024-04-18T00:00:00+12:00', '2024-04-18T23:59:59+12:00', [], $options);
         $client->getTransactionTotals('2024-04-17', '2024-04-18', null, $options);
-        $client->createSubscription('https://shop.example/webhook', [], $options);
+        $client->createSubscription(
+            'https://shop.example/webhook',
+            [BlinkDebitClient::EVENT_FIXED_RECURRING_PAYMENT_COMPLETED],
+            $options
+        );
         $client->getSubscriptions($options);
         $client->deleteSubscription(self::UUID, $options);
 
@@ -708,8 +728,8 @@ class BlinkDebitClientTest extends TestCase
 
         try {
             $client->getMeta();
-            $this->fail('Expected a BlinkDebitApiException.');
-        } catch (BlinkDebitApiException $exception) {
+            $this->fail('Expected an UnauthorisedException.');
+        } catch (UnauthorisedException $exception) {
             $this->assertSame(401, $exception->getStatusCode());
             $this->assertCount(4, $this->transport->requests);
         }
@@ -750,13 +770,17 @@ class BlinkDebitClientTest extends TestCase
 
     public function testTokenEndpointOutagesAreNotReportedAsBadCredentials(): void
     {
-        $this->transport->queue(503, ['message' => 'upstream unavailable']);
+        for ($i = 0; $i < 3; $i++) {
+            $this->transport->queue(503, ['message' => 'upstream unavailable']);
+        }
 
         try {
             $this->client()->getAccessToken();
             $this->fail('Expected a BlinkDebitApiException.');
-        } catch (BlinkDebitApiException $exception) {
+        } catch (ServerErrorException $exception) {
             $this->assertSame(503, $exception->getStatusCode());
+            $this->assertCount(3, $this->transport->requests);
+            $this->assertSame([1000, 5000], $this->sleeps);
             $this->assertStringContainsString('HTTP 503', $exception->getMessage());
             $this->assertStringContainsString('upstream unavailable', $exception->getMessage());
             $this->assertStringNotContainsString('client secret', $exception->getMessage());
@@ -771,7 +795,7 @@ class BlinkDebitClientTest extends TestCase
         try {
             $this->client()->getAccessToken();
             $this->fail('Expected a BlinkDebitApiException.');
-        } catch (BlinkDebitApiException $exception) {
+        } catch (UnauthorisedException $exception) {
             $this->assertSame(401, $exception->getStatusCode());
             $this->assertStringContainsString('client ID and client secret', $exception->getMessage());
         }
@@ -789,7 +813,7 @@ class BlinkDebitClientTest extends TestCase
             $this->assertSame(0, $exception->getStatusCode());
             $this->assertStringContainsString('encoded as JSON', $exception->getMessage());
         }
-        $this->assertCount(1, $this->transport->requests);
+        $this->assertSame([], $this->transport->requests, 'Rejected locally, before any token fetch.');
     }
 
     public function testMalformedAmountsAreRejectedLocally(): void

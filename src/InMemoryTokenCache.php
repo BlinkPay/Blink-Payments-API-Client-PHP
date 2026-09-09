@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace BlinkPay\BlinkDebit;
 
 /**
- * Default per-process token cache. Suitable for CLI scripts and tests; web
- * integrations should provide a persistent implementation instead (see the
- * PSR-16 and PSR-6 adapters in the Psr namespace), otherwise every request
- * fetches a fresh token.
+ * Per-process token cache, the default when APCu is not available. Suitable
+ * for CLI scripts and tests; a web integration without APCu should provide a
+ * persistent implementation instead (see the PSR-16 and PSR-6 adapters in the
+ * Psr namespace), otherwise every request fetches a fresh token from the
+ * rate-limited token endpoint.
  */
 class InMemoryTokenCache implements TokenCacheInterface
 {

@@ -4,43 +4,70 @@ declare(strict_types=1);
 
 namespace BlinkPay\BlinkDebit\Test;
 
+use BlinkPay\BlinkDebit\BlinkDebitApiException;
 use BlinkPay\BlinkDebit\Pcr;
 use PHPUnit\Framework\TestCase;
 
 class PcrTest extends TestCase
 {
-    public function testFieldsAreTruncatedToTwelveCharacters(): void
+    public function testBuildFollowsTheApiArgumentOrder(): void
     {
-        $pcr = Pcr::build('A Very Long Shop Name', 'Reference 123456');
+        $pcr = Pcr::build('Shop', '42', '1005');
 
-        $this->assertSame('A Very Long ', $pcr['particulars']);
-        $this->assertSame('Reference 12', $pcr['reference']);
-    }
-
-    public function testDisallowedCharactersAreStripped(): void
-    {
-        $pcr = Pcr::build('Shop! @Näme', 'Ref<>"; DROP');
-
-        $this->assertSame('Shop Nme', $pcr['particulars']);
-        $this->assertSame('Ref DROP', $pcr['reference']);
-    }
-
-    public function testBlankParticularsFallBackToOrder(): void
-    {
-        $this->assertSame('Order', Pcr::build('')['particulars']);
+        $this->assertSame(['particulars' => 'Shop', 'code' => '42', 'reference' => '1005'], $pcr);
     }
 
     public function testEmptyCodeAndReferenceAreOmitted(): void
     {
-        $pcr = Pcr::build('Shop');
-
-        $this->assertSame(['particulars' => 'Shop'], $pcr);
+        $this->assertSame(['particulars' => 'Shop'], Pcr::build('Shop'));
+        $this->assertSame(['particulars' => 'Shop', 'reference' => 'INV-1'], Pcr::build('Shop', '', 'INV-1'));
     }
 
-    public function testCodeIsIncludedWhenProvided(): void
+    public function testBuildTrimsButNeverTruncates(): void
     {
-        $pcr = Pcr::build('Shop', '1005', '42');
+        $this->assertSame(['particulars' => 'Twelve chars'], Pcr::build(' Twelve chars '));
 
-        $this->assertSame(['particulars' => 'Shop', 'code' => '42', 'reference' => '1005'], $pcr);
+        $this->expectException(BlinkDebitApiException::class);
+        $this->expectExceptionMessage('Invalid PCR reference "Reference 123456"');
+        Pcr::build('Shop', '', 'Reference 123456');
+    }
+
+    public function testBuildRejectsDisallowedCharacters(): void
+    {
+        $this->expectException(BlinkDebitApiException::class);
+        $this->expectExceptionMessage('Invalid PCR particulars');
+        Pcr::build('Shop! @Näme');
+    }
+
+    public function testBuildRejectsBlankParticulars(): void
+    {
+        $this->expectException(BlinkDebitApiException::class);
+        $this->expectExceptionMessage('particulars is required');
+        Pcr::build('   ');
+    }
+
+    public function testSanitiseStripsAndTruncates(): void
+    {
+        $pcr = Pcr::sanitise('A Very Long Shop Name', 'Shop! @Näme', 'Ref<>"; DROP 1234567890');
+
+        $this->assertSame(
+            ['particulars' => 'A Very Long', 'code' => 'Shop Nme', 'reference' => 'Ref DROP 123'],
+            $pcr
+        );
+    }
+
+    public function testSanitiseStillRejectsParticularsThatCleanToNothing(): void
+    {
+        $this->expectException(BlinkDebitApiException::class);
+        $this->expectExceptionMessage('particulars is required');
+        Pcr::sanitise('日本語 ★');
+    }
+
+    public function testIsValidMatchesTheApiRules(): void
+    {
+        $this->assertTrue(Pcr::isValid("A-Z 0-9 &#?:"));
+        $this->assertTrue(Pcr::isValid(''));
+        $this->assertFalse(Pcr::isValid('Thirteen char'));
+        $this->assertFalse(Pcr::isValid('Shop!'));
     }
 }

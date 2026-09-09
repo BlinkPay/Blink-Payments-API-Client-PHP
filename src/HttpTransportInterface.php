@@ -22,9 +22,13 @@ interface HttpTransportInterface
      * @param string|null      $body           Raw request body, if any.
      * @param int              $timeoutSeconds Total request timeout.
      *
-     * @return array{status: int, body: string}
+     * @return array{status: int, body: string, headers?: array<string, string>} Response headers, when the
+     *                                                                            transport can supply them, are
+     *                                                                            keyed by lower-case name; the
+     *                                                                            client reads Retry-After from
+     *                                                                            them.
      *
-     * @throws BlinkDebitApiException When the request could not be sent at all.
+     * @throws \BlinkPay\BlinkDebit\Exception\TransportException When no HTTP response was received at all.
      */
     public function send(string $method, string $url, array $headers, ?string $body, int $timeoutSeconds): array;
 }

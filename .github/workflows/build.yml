@@ -25,9 +25,10 @@ jobs:
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-
       - name: Install packages
-        run: composer install --no-interaction --no-progress --prefer-dist
+        run: composer update --no-interaction --no-progress --prefer-dist
       - name: Run Snyk to check for vulnerabilities
-        uses: snyk/actions/php@master
+        # Pinned to a commit rather than @master so the action cannot change under us.
+        uses: snyk/actions/php@12140f4059e244892ae643824a95459a102120dd
         with:
           command: monitor
         env:
@@ -54,7 +55,7 @@ jobs:
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-
       - name: Install packages
-        run: composer install --no-interaction --no-progress --prefer-dist
+        run: composer update --no-interaction --no-progress --prefer-dist
       - name: Validate composer.json
         run: composer validate --strict
       - name: Run PHPStan
@@ -74,7 +75,9 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php-version }}
-          extensions: curl, json
+          # apcu backs the default token cache; enabling it for the CLI lets its tests run.
+          extensions: curl, json, apcu
+          ini-values: apc.enable_cli=1
           coverage: none
       - name: Cache Composer packages
         uses: actions/cache@v6
@@ -90,8 +93,42 @@ jobs:
       - name: Test
         run: vendor/bin/phpunit
 
+  framework_glue:
+    # Boots the real Laravel, Symfony and CakePHP containers against the
+    # provider, bundle and plugin in src/, and runs PHPStan over that glue
+    # with the frameworks installed (the main analysis job excludes it).
+    needs: static_analysis
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: [ '8.3', '8.4' ]
+    defaults:
+      run:
+        working-directory: test-frameworks
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup PHP ${{ matrix.php-version }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: curl, json, intl, mbstring
+          coverage: none
+      - name: Cache Composer packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.composer/cache
+          key: ${{ runner.os }}-composer-frameworks-${{ matrix.php-version }}-${{ hashFiles('test-frameworks/composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-frameworks-${{ matrix.php-version }}-
+      - name: Install frameworks
+        run: composer update --no-interaction --no-progress --prefer-dist
+      - name: Analyse the framework glue
+        run: composer analyse
+      - name: Boot the containers
+        run: composer test
+
   sonar:
-    needs: build_test
+    needs: [ build_test, framework_glue ]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -117,10 +154,12 @@ jobs:
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-
       - name: Install packages
-        run: composer install --no-interaction --no-progress --prefer-dist
+        run: composer update --no-interaction --no-progress --prefer-dist
       - name: Test with coverage
         run: vendor/bin/phpunit --coverage-clover build/coverage.xml --log-junit build/junit.xml
       - name: Run Sonar
+        # Gates the build. Skipped on pull requests from forks, which cannot read the token.
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: sonarsource/sonarqube-scan-action@v8
         with:
           projectBaseDir: .
@@ -130,4 +169,3 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
-        continue-on-error: true

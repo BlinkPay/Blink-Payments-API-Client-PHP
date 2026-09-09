@@ -4,6 +4,24 @@ declare(strict_types=1);
 
 namespace BlinkPay\BlinkDebit;
 
+use BlinkPay\BlinkDebit\Enum\ConsentStatus;
+use BlinkPay\BlinkDebit\Enum\PaymentStatus;
+use BlinkPay\BlinkDebit\Enum\RefundType;
+use BlinkPay\BlinkDebit\Exception\ConflictException;
+use BlinkPay\BlinkDebit\Exception\ConsentRejectedException;
+use BlinkPay\BlinkDebit\Exception\ConsentTimeoutException;
+use BlinkPay\BlinkDebit\Exception\ForbiddenException;
+use BlinkPay\BlinkDebit\Exception\PaymentRejectedException;
+use BlinkPay\BlinkDebit\Exception\PaymentTimeoutException;
+use BlinkPay\BlinkDebit\Exception\RateLimitExceededException;
+use BlinkPay\BlinkDebit\Exception\ResourceNotFoundException;
+use BlinkPay\BlinkDebit\Exception\ServerErrorException;
+use BlinkPay\BlinkDebit\Exception\TransportException;
+use BlinkPay\BlinkDebit\Exception\UnauthorisedException;
+use BlinkPay\BlinkDebit\Request\Amount;
+use BlinkPay\BlinkDebit\Request\Flow;
+use BlinkPay\BlinkDebit\Request\SingleConsentRequest;
+
 /**
  * Client for the Blink Debit API (Blink PayNow and Blink AutoPay): OAuth token
  * handling, bank metadata, quick payments, single and enduring consents,
@@ -17,10 +35,15 @@ namespace BlinkPay\BlinkDebit;
  * exception messages.
  *
  * Every endpoint method takes an optional {@see RequestOptions} carrying the
- * per-request tracing and customer-context headers the API defines.
+ * per-request tracing and customer-context headers the API defines. A
+ * request-id and x-correlation-id are generated when the caller supplies
+ * none, and stay the same across the client's internal retries.
  */
 class BlinkDebitClient
 {
+    /** SDK version, sent in the User-Agent header so support can identify SDK traffic. */
+    public const VERSION = '1.0.0';
+
     public const PRODUCTION_BASE_URL = 'https://debit.blinkpay.co.nz';
     public const SANDBOX_BASE_URL = 'https://sandbox.debit.blinkpay.co.nz';
 
@@ -47,6 +70,12 @@ class BlinkDebitClient
     public const EVENT_FIXED_RECURRING_PAYMENT_FAILED = 'urn:nz:co:blinkpay:debit:events:fixed-recurring-payment-failed';
     public const EVENT_FIXED_RECURRING_PAYMENT_CANCELLED = 'urn:nz:co:blinkpay:debit:events:fixed-recurring-payment-cancelled';
 
+    public const EVENT_TYPES = [
+        self::EVENT_FIXED_RECURRING_PAYMENT_COMPLETED,
+        self::EVENT_FIXED_RECURRING_PAYMENT_FAILED,
+        self::EVENT_FIXED_RECURRING_PAYMENT_CANCELLED,
+    ];
+
     // Access tokens last one hour; refresh five minutes early so an in-flight
     // checkout never crosses the expiry boundary with a stale token.
     private const TOKEN_EXPIRY_BUFFER_SECONDS = 300;
@@ -55,6 +84,19 @@ class BlinkDebitClient
     private const DEFAULT_TIMEOUT_SECONDS = 30;
 
     private const API_PATH_PREFIX = '/payments/v1';
+
+    /**
+     * Delays before the second and third attempt at a request that met a
+     * 429, a 5xx or a transport failure: three attempts in total, the same
+     * schedule as the Java and Node SDKs.
+     */
+    private const RETRY_DELAYS_MS = [1000, 5000];
+
+    /** A Retry-After longer than this is not worth holding a PHP request open for. */
+    private const MAX_RETRY_AFTER_SECONDS = 30;
+
+    /** Interval between status polls in the await helpers. */
+    private const POLL_INTERVAL_MS = 1000;
 
     private string $clientId;
 
@@ -68,6 +110,9 @@ class BlinkDebitClient
 
     private int $requestTimeout = self::DEFAULT_TIMEOUT_SECONDS;
 
+    /** @var callable(int): void Sleeps for a number of milliseconds. */
+    private $sleep;
+
     public function __construct(
         string $clientId,
         string $clientSecret,
@@ -78,8 +123,54 @@ class BlinkDebitClient
         $this->clientId = trim($clientId);
         $this->clientSecret = trim($clientSecret);
         $this->sandbox = $sandbox;
-        $this->tokenCache = $tokenCache ?? new InMemoryTokenCache();
+        $this->tokenCache = $tokenCache ?? self::defaultTokenCache();
         $this->transport = $transport ?? new CurlTransport();
+        $this->sleep = static function (int $milliseconds): void {
+            usleep($milliseconds * 1000);
+        };
+    }
+
+    /**
+     * Builds a client from the BLINKPAY_CLIENT_ID, BLINKPAY_CLIENT_SECRET,
+     * BLINKPAY_SANDBOX and BLINKPAY_TIMEOUT environment variables. An unset
+     * or blank BLINKPAY_SANDBOX means sandbox; production must be opted into
+     * with an explicit `false`.
+     *
+     * @throws BlinkDebitApiException When BLINKPAY_SANDBOX or BLINKPAY_TIMEOUT is not parseable.
+     */
+    public static function fromEnvironment(
+        ?TokenCacheInterface $tokenCache = null,
+        ?HttpTransportInterface $transport = null
+    ): self {
+        $client = new self(
+            Env::get(Env::CLIENT_ID) ?? '',
+            Env::get(Env::CLIENT_SECRET) ?? '',
+            Env::bool(Env::get(Env::SANDBOX), true),
+            $tokenCache,
+            $transport
+        );
+
+        $timeout = Env::get(Env::TIMEOUT);
+        if ($timeout !== null && trim($timeout) !== '') {
+            if (!ctype_digit(trim($timeout))) {
+                throw new BlinkDebitApiException(
+                    sprintf('Invalid %s "%s": expected a whole number of seconds.', Env::TIMEOUT, $timeout)
+                );
+            }
+            $client->setRequestTimeout((int) $timeout);
+        }
+
+        return $client;
+    }
+
+    /**
+     * APCu when it is loaded and enabled, so tokens survive between PHP-FPM
+     * requests without any configuration; otherwise per-process memory. Never
+     * a file cache: that would write bearer tokens to disk.
+     */
+    private static function defaultTokenCache(): TokenCacheInterface
+    {
+        return ApcuTokenCache::isAvailable() ? new ApcuTokenCache() : new InMemoryTokenCache();
     }
 
     /**
@@ -91,6 +182,18 @@ class BlinkDebitClient
     public function setRequestTimeout(int $seconds): void
     {
         $this->requestTimeout = max(1, $seconds);
+    }
+
+    /**
+     * Replaces the sleep used between retries and status polls. The default
+     * blocks with usleep(); an async runtime (Swoole, ReactPHP, Fibers) can
+     * substitute a cooperative wait, and tests can substitute none.
+     *
+     * @param callable(int): void $sleep Receives a duration in milliseconds.
+     */
+    public function setSleep(callable $sleep): void
+    {
+        $this->sleep = $sleep;
     }
 
     /**
@@ -108,6 +211,10 @@ class BlinkDebitClient
 
     /**
      * Returns a cached access token, fetching a new one when missing or forced.
+     *
+     * Concurrent workers that all miss an empty shared cache each fetch a
+     * token; the extra fetches are harmless (every token is valid) and the
+     * retry on 429 absorbs a burst, so no cross-process lock is taken here.
      *
      * @throws BlinkDebitApiException
      */
@@ -131,12 +238,13 @@ class BlinkDebitClient
         // The documented token contract is OAuth 2.0 form encoding. The server
         // happens to accept a JSON body too, but that is undocumented behaviour
         // a hardening change could withdraw without notice.
-        $response = $this->transport->send(
+        $response = $this->sendWithRetry(
             'POST',
             $this->baseUrl() . '/oauth2/token',
             [
                 'Content-Type: application/x-www-form-urlencoded',
                 'Accept: application/json',
+                $this->userAgentHeader(),
             ],
             http_build_query(
                 [
@@ -147,18 +255,14 @@ class BlinkDebitClient
                 '',
                 '&'
             ),
-            $this->requestTimeout
+            true
         );
 
         $body = json_decode($response['body'], true);
         $body = is_array($body) ? $body : [];
 
         if ($response['status'] !== 200 || empty($body['access_token'])) {
-            throw new BlinkDebitApiException(
-                $this->tokenErrorMessage($response['status'], $body),
-                $response['status'],
-                $body
-            );
+            throw $this->tokenException($response['status'], $body);
         }
 
         $expiresIn = isset($body['expires_in']) ? (int) $body['expires_in'] : 3600;
@@ -252,12 +356,15 @@ class BlinkDebitClient
     // ------------------------------------------------------------------
 
     /**
-     * Creates a quick payment (single consent + one-off debit).
+     * Creates a quick payment (single consent + one-off debit). Build the
+     * body with {@see \BlinkPay\BlinkDebit\Request\QuickPaymentRequest} and
+     * {@see Flow}, or pass the API's snake_case shape directly.
      *
      * @param array<string, mixed> $payload        The quick payment request body.
      * @param string               $idempotencyKey Idempotency key so a checkout retry cannot double-create.
      *
-     * @return array<string, mixed> Includes `quick_payment_id` and `redirect_uri`.
+     * @return array<string, mixed> Includes `quick_payment_id`, and `redirect_uri` for gateway and
+     *                              redirect flows (absent for decoupled flow).
      *
      * @throws BlinkDebitApiException
      */
@@ -293,7 +400,7 @@ class BlinkDebitClient
         ?RequestOptions $options = null
     ): array {
         return $this->createQuickPayment(
-            $this->gatewayConsentPayload($totalNzd, $redirectUri, $pcr, $hashedCustomerIdentifier),
+            SingleConsentRequest::build(Flow::gateway($redirectUri), $totalNzd, $pcr, $hashedCustomerIdentifier),
             $idempotencyKey,
             $options
         );
@@ -303,6 +410,7 @@ class BlinkDebitClient
      * Retrieves a quick payment, including its consent status and payments.
      * The first call after authorisation initiates the debit, so callers must
      * treat errors as "outcome not yet known", never as a failed payment.
+     * {@see awaitSuccessfulQuickPayment()} handles that for you.
      *
      * @return array<string, mixed>
      *
@@ -338,14 +446,98 @@ class BlinkDebitClient
         );
     }
 
+    /**
+     * Polls a quick payment once a second until its payment settles, for up
+     * to $maxWaitSeconds attempts. Each poll is a getQuickPayment(), so the
+     * first one after authorisation initiates the debit; a poll that fails
+     * with a transport or server error leaves the outcome unknown and is
+     * simply polled again, because the payment's own status is the authority.
+     *
+     * Suited to a queue job, a scheduled command or a CLI script, not to a
+     * web request, which would hold a worker for the whole wait.
+     *
+     * @return array<string, mixed> The quick payment whose first payment reached AcceptedSettlementCompleted.
+     *
+     * @throws ConsentRejectedException When the customer rejected the consent or it was revoked.
+     * @throws ConsentTimeoutException  When the gateway timed out, or the wait ran out before authorisation.
+     *                                  In the latter case the quick payment is revoked first so it cannot
+     *                                  be paid later; a failed revoke is attached as the previous exception.
+     * @throws PaymentRejectedException When the bank declined the payment; no funds moved.
+     * @throws PaymentTimeoutException  When the consent was authorised but the payment had not settled in
+     *                                  time. Nothing is revoked: funds may be in flight, so keep polling
+     *                                  getQuickPayment() or getPayment() rather than treating it as failed.
+     * @throws BlinkDebitApiException   For local validation failures.
+     */
+    public function awaitSuccessfulQuickPayment(
+        string $quickPaymentId,
+        int $maxWaitSeconds,
+        ?RequestOptions $options = null
+    ): array {
+        $this->assertUuid($quickPaymentId, 'quick payment ID');
+
+        $lastConsentStatus = null;
+        $result = $this->poll(
+            $maxWaitSeconds,
+            function () use ($quickPaymentId, $options): array {
+                return $this->getQuickPayment($quickPaymentId, $options);
+            },
+            function (array $quickPayment) use ($quickPaymentId, &$lastConsentStatus): bool {
+                $consent = is_array($quickPayment['consent'] ?? null) ? $quickPayment['consent'] : [];
+                $lastConsentStatus = $consent['status'] ?? null;
+                $this->assertConsentNotTerminal($lastConsentStatus, 'quick payment', $quickPaymentId);
+
+                $paymentStatus = $this->firstPaymentStatus($consent);
+                if ($paymentStatus === PaymentStatus::REJECTED) {
+                    throw new PaymentRejectedException(
+                        sprintf('The payment for quick payment %s was rejected by the bank.', $quickPaymentId)
+                    );
+                }
+
+                return $paymentStatus === PaymentStatus::ACCEPTED_SETTLEMENT_COMPLETED;
+            }
+        );
+        if ($result !== null) {
+            return $result;
+        }
+
+        if ($lastConsentStatus === ConsentStatus::AUTHORISED || $lastConsentStatus === ConsentStatus::CONSUMED) {
+            throw new PaymentTimeoutException(sprintf(
+                'Quick payment %s was authorised but its payment had not settled after %d seconds; keep polling.',
+                $quickPaymentId,
+                $maxWaitSeconds
+            ));
+        }
+
+        $revokeFailure = null;
+        try {
+            $this->revokeQuickPayment($quickPaymentId, $options);
+        } catch (BlinkDebitApiException $exception) {
+            $revokeFailure = $exception;
+        }
+
+        throw new ConsentTimeoutException(
+            sprintf(
+                'Quick payment %s was not authorised within %d seconds and has been %s.',
+                $quickPaymentId,
+                $maxWaitSeconds,
+                $revokeFailure === null ? 'revoked' : 'left unrevoked (the revoke failed; see the previous exception)'
+            ),
+            0,
+            null,
+            $revokeFailure
+        );
+    }
+
     // ------------------------------------------------------------------
     // Single consents
     // ------------------------------------------------------------------
 
     /**
      * Creates a single (one-off) payment consent. A successful response does
-     * not mean the consent is authorised: poll getSingleConsent() for status,
-     * then debit it with createSingleConsentPayment().
+     * not mean the consent is authorised: poll getSingleConsent() (or call
+     * awaitAuthorisedSingleConsent()) for status, then debit it with
+     * createSingleConsentPayment(). Build the body with
+     * {@see SingleConsentRequest} and {@see Flow}.
      *
      * @param array<string, mixed> $payload The single consent request body (flow, pcr, amount).
      *
@@ -378,7 +570,7 @@ class BlinkDebitClient
         ?RequestOptions $options = null
     ): array {
         return $this->createSingleConsent(
-            $this->gatewayConsentPayload($totalNzd, $redirectUri, $pcr, $hashedCustomerIdentifier),
+            SingleConsentRequest::build(Flow::gateway($redirectUri), $totalNzd, $pcr, $hashedCustomerIdentifier),
             $idempotencyKey,
             $options
         );
@@ -406,14 +598,53 @@ class BlinkDebitClient
         $this->request('DELETE', '/single-consents/' . rawurlencode($consentId), null, $this->headersFor($options));
     }
 
+    /**
+     * Polls a single consent once a second until it is Authorised (or already
+     * Consumed), for up to $maxWaitSeconds attempts. Nothing is revoked on
+     * timeout: an unpaid single consent moves no money, and a card hold is
+     * released by the gateway on its own.
+     *
+     * @return array<string, mixed> The authorised consent.
+     *
+     * @throws ConsentRejectedException When the customer rejected the consent or it was revoked.
+     * @throws ConsentTimeoutException  When the gateway timed out or the wait ran out.
+     * @throws BlinkDebitApiException   For local validation failures.
+     */
+    public function awaitAuthorisedSingleConsent(
+        string $consentId,
+        int $maxWaitSeconds,
+        ?RequestOptions $options = null
+    ): array {
+        $this->assertUuid($consentId, 'consent ID');
+
+        $result = $this->poll(
+            $maxWaitSeconds,
+            function () use ($consentId, $options): array {
+                return $this->getSingleConsent($consentId, $options);
+            },
+            function (array $consent) use ($consentId): bool {
+                return $this->isConsentAuthorised($consent, 'single consent', $consentId);
+            }
+        );
+        if ($result !== null) {
+            return $result;
+        }
+
+        throw new ConsentTimeoutException(
+            sprintf('Single consent %s was not authorised within %d seconds.', $consentId, $maxWaitSeconds)
+        );
+    }
+
     // ------------------------------------------------------------------
     // Enduring consents
     // ------------------------------------------------------------------
 
     /**
-     * Creates an enduring (recurring) payment consent. Required payload keys
-     * are `flow`, `from_timestamp`, `period` and `maximum_amount_period`;
-     * `expiry_timestamp` may be omitted for an indefinite consent.
+     * Creates an enduring (recurring) payment consent. Build the body with
+     * {@see \BlinkPay\BlinkDebit\Request\EnduringConsentRequest} and
+     * {@see Flow}; required keys are `flow`, `from_timestamp`, `period` and
+     * `maximum_amount_period`, and `expiry_timestamp` may be omitted for an
+     * indefinite consent.
      *
      * @param array<string, mixed> $payload
      *
@@ -448,16 +679,71 @@ class BlinkDebitClient
         $this->request('DELETE', '/enduring-consents/' . rawurlencode($consentId), null, $this->headersFor($options));
     }
 
+    /**
+     * Polls an enduring consent once a second until it is Authorised, for up
+     * to $maxWaitSeconds attempts. On timeout the consent is revoked first,
+     * because an enduring consent grants ongoing access and must not be left
+     * open for the customer to authorise later unobserved.
+     *
+     * @return array<string, mixed> The authorised consent.
+     *
+     * @throws ConsentRejectedException When the customer rejected the consent or it was revoked.
+     * @throws ConsentTimeoutException  When the gateway timed out, or the wait ran out (after revoking; a
+     *                                  failed revoke is attached as the previous exception).
+     * @throws BlinkDebitApiException   For local validation failures.
+     */
+    public function awaitAuthorisedEnduringConsent(
+        string $consentId,
+        int $maxWaitSeconds,
+        ?RequestOptions $options = null
+    ): array {
+        $this->assertUuid($consentId, 'consent ID');
+
+        $result = $this->poll(
+            $maxWaitSeconds,
+            function () use ($consentId, $options): array {
+                return $this->getEnduringConsent($consentId, $options);
+            },
+            function (array $consent) use ($consentId): bool {
+                return $this->isConsentAuthorised($consent, 'enduring consent', $consentId);
+            }
+        );
+        if ($result !== null) {
+            return $result;
+        }
+
+        $revokeFailure = null;
+        try {
+            $this->revokeEnduringConsent($consentId, $options);
+        } catch (BlinkDebitApiException $exception) {
+            $revokeFailure = $exception;
+        }
+
+        throw new ConsentTimeoutException(
+            sprintf(
+                'Enduring consent %s was not authorised within %d seconds and has been %s.',
+                $consentId,
+                $maxWaitSeconds,
+                $revokeFailure === null ? 'revoked' : 'left unrevoked (the revoke failed; see the previous exception)'
+            ),
+            0,
+            null,
+            $revokeFailure
+        );
+    }
+
     // ------------------------------------------------------------------
     // Fixed recurring payments
     // ------------------------------------------------------------------
 
     /**
      * Creates a fixed recurring payment schedule against an authorised
-     * enduring consent. Required payload keys are `consent_id`, `amount` and
-     * `pcr`; `start_date` (NZ date, today or later) and `retry_strategy`
-     * (`none` or `same_day`) are optional. Only one active schedule is
-     * allowed per consent (409 otherwise).
+     * enduring consent. Build the body with
+     * {@see \BlinkPay\BlinkDebit\Request\FixedRecurringPaymentRequest};
+     * required keys are `consent_id`, `amount` and `pcr`, while `start_date`
+     * (NZ date, today or later) and `retry_strategy` (`none` or `same_day`)
+     * are optional. Only one active schedule is allowed per consent (409
+     * otherwise).
      *
      * @param array<string, mixed> $payload
      *
@@ -521,10 +807,10 @@ class BlinkDebitClient
      * Creates a payment from a caller-built payload. Prefer the typed
      * helpers; this exists for payload shapes they do not cover.
      *
-     * A 201 does not mean the debit succeeded: poll getPayment(). A 409 with
-     * code BP712 carries no payment ID because a concurrent request on the
-     * same consent claimed the bank submission — read the consent's payments
-     * before retrying.
+     * A 201 does not mean the debit succeeded: poll getPayment() or call
+     * awaitSuccessfulPayment(). A 409 with code BP712 carries no payment ID
+     * because a concurrent request on the same consent claimed the bank
+     * submission — read the consent's payments before retrying.
      *
      * @param array<string, mixed> $payload
      *
@@ -580,7 +866,7 @@ class BlinkDebitClient
         return $this->createPayment(
             [
                 'consent_id' => $consentId,
-                'amount' => $this->nzdAmount($totalNzd),
+                'amount' => Amount::nzd($totalNzd),
                 'pcr' => $pcr,
             ],
             $idempotencyKey,
@@ -602,37 +888,89 @@ class BlinkDebitClient
         return $this->request('GET', '/payments/' . rawurlencode($paymentId), null, $this->headersFor($options));
     }
 
+    /**
+     * Polls a payment once a second until it reaches
+     * AcceptedSettlementCompleted, for up to $maxWaitSeconds attempts.
+     *
+     * @return array<string, mixed> The settled payment.
+     *
+     * @throws PaymentRejectedException When the bank declined the payment; no funds moved.
+     * @throws PaymentTimeoutException  When the payment was still Pending or AcceptedSettlementInProcess
+     *                                  after the wait. It may still settle: keep polling or wait for the
+     *                                  webhook rather than treating it as failed.
+     * @throws BlinkDebitApiException   For local validation failures.
+     */
+    public function awaitSuccessfulPayment(string $paymentId, int $maxWaitSeconds, ?RequestOptions $options = null): array
+    {
+        $this->assertUuid($paymentId, 'payment ID');
+
+        $result = $this->poll(
+            $maxWaitSeconds,
+            function () use ($paymentId, $options): array {
+                return $this->getPayment($paymentId, $options);
+            },
+            static function (array $payment) use ($paymentId): bool {
+                $status = $payment['status'] ?? null;
+                if ($status === PaymentStatus::REJECTED) {
+                    throw new PaymentRejectedException(sprintf('Payment %s was rejected by the bank.', $paymentId));
+                }
+
+                return $status === PaymentStatus::ACCEPTED_SETTLEMENT_COMPLETED;
+            }
+        );
+        if ($result !== null) {
+            return $result;
+        }
+
+        throw new PaymentTimeoutException(
+            sprintf('Payment %s had not settled after %d seconds; keep polling.', $paymentId, $maxWaitSeconds)
+        );
+    }
+
     // ------------------------------------------------------------------
     // Refunds
     // ------------------------------------------------------------------
 
     /**
-     * Refunds a card-settled payment in full through the card network. Use
-     * only when the whole payment is being refunded and no surcharge was
-     * applied; otherwise use createPartialRefund() with the exact amount.
+     * Requests a money-transfer refund of the whole payment. Today the API
+     * processes this type for card-settled payments (see the card payments
+     * guide); for a bank-settled payment use createAccountNumberRefund().
+     * Use it only when no surcharge was applied and no partial refund exists
+     * (422 BP039); otherwise use createPartialRefund() with the exact amount.
      *
-     * @param array<string, string> $pcr Statement particulars/code/reference; see Pcr::build().
+     * @param array<string, string> $pcr            Statement particulars/code/reference; see Pcr::build().
+     * @param string|null           $idempotencyKey Optional; the API replays a retried request with the same
+     *                                              key instead of refunding twice, so supply one and persist
+     *                                              it against the refund attempt.
      *
      * @return array<string, mixed> Includes `refund_id`.
      *
      * @throws BlinkDebitApiException
      */
-    public function createFullRefund(string $paymentId, array $pcr, ?RequestOptions $options = null): array
-    {
+    public function createFullRefund(
+        string $paymentId,
+        array $pcr,
+        ?string $idempotencyKey = null,
+        ?RequestOptions $options = null
+    ): array {
         $this->assertUuid($paymentId, 'payment ID');
 
         return $this->createRefund([
-            'type' => 'full_refund',
+            'type' => RefundType::FULL_REFUND,
             'payment_id' => $paymentId,
             'pcr' => $pcr,
-        ], $options);
+        ], $idempotencyKey, $options);
     }
 
     /**
-     * Refunds part of a card-settled payment through the card network.
+     * Requests a money-transfer refund of part of a payment. Today the API
+     * processes this type for card-settled payments; for a bank-settled
+     * payment use createAccountNumberRefund(). Several partial refunds may be
+     * made against one payment, up to its total.
      *
-     * @param array<string, string> $pcr      Statement particulars/code/reference; see Pcr::build().
-     * @param string $totalNzd Decimal amount as a string, e.g. "12.50".
+     * @param array<string, string> $pcr            Statement particulars/code/reference; see Pcr::build().
+     * @param string                $totalNzd       Decimal amount as a string, e.g. "12.50".
+     * @param string|null           $idempotencyKey Optional; see createFullRefund().
      *
      * @return array<string, mixed> Includes `refund_id`.
      *
@@ -642,16 +980,17 @@ class BlinkDebitClient
         string $paymentId,
         array $pcr,
         string $totalNzd,
+        ?string $idempotencyKey = null,
         ?RequestOptions $options = null
     ): array {
         $this->assertUuid($paymentId, 'payment ID');
 
         return $this->createRefund([
-            'type' => 'partial_refund',
+            'type' => RefundType::PARTIAL_REFUND,
             'payment_id' => $paymentId,
             'pcr' => $pcr,
-            'amount' => $this->nzdAmount($totalNzd),
-        ], $options);
+            'amount' => Amount::nzd($totalNzd),
+        ], $idempotencyKey, $options);
     }
 
     /**
@@ -666,22 +1005,28 @@ class BlinkDebitClient
      *
      * @throws BlinkDebitApiException
      */
-    public function createAccountNumberRefund(string $paymentId, ?RequestOptions $options = null): array
-    {
+    public function createAccountNumberRefund(
+        string $paymentId,
+        ?string $idempotencyKey = null,
+        ?RequestOptions $options = null
+    ): array {
         $this->assertUuid($paymentId, 'payment ID');
 
         return $this->createRefund([
-            'type' => 'account_number',
+            'type' => RefundType::ACCOUNT_NUMBER,
             'payment_id' => $paymentId,
-        ], $options);
+        ], $idempotencyKey, $options);
     }
 
     /**
      * Creates a refund from a caller-built payload. Prefer the typed helpers;
-     * this exists for payload shapes the helpers do not cover. Note the
-     * refunds API accepts no idempotency key and allows multiple money-moving
-     * refunds against one payment, so callers must guard against double
-     * submission themselves.
+     * this exists for payload shapes the helpers do not cover.
+     *
+     * The API allows several money-moving refunds against one payment, so a
+     * retried request without an idempotency key can refund twice. With a
+     * key, the API replays the original response instead; without one, the
+     * request is also not retried by this client on a 5xx or transport
+     * failure, since the outcome would be unknown.
      *
      * @param array<string, mixed> $payload
      *
@@ -689,13 +1034,13 @@ class BlinkDebitClient
      *
      * @throws BlinkDebitApiException
      */
-    public function createRefund(array $payload, ?RequestOptions $options = null): array
+    public function createRefund(array $payload, ?string $idempotencyKey = null, ?RequestOptions $options = null): array
     {
         if (isset($payload['payment_id']) && is_string($payload['payment_id'])) {
             $this->assertUuid($payload['payment_id'], 'payment ID');
         }
 
-        return $this->request('POST', '/refunds', $payload, $this->headersFor($options));
+        return $this->request('POST', '/refunds', $payload, $this->headersFor($options, $idempotencyKey));
     }
 
     /**
@@ -726,7 +1071,7 @@ class BlinkDebitClient
      * @param string               $startDateTime ISO 8601 date-time, e.g. "2024-04-18T00:00:00+12:00".
      * @param string               $endDateTime   ISO 8601 date-time.
      * @param array<string, mixed> $filters       Optional `merchant_id`, `bank`, `card_network`,
-     *                                            `payment_status`, `consent_status`, `page` (from 1)
+     *                                            `payment_status`, `consent_status`, `page` (1-10000)
      *                                            and `size` (1-1000, default 100).
      *
      * @return array<mixed> List of transaction objects, as decoded JSON.
@@ -788,8 +1133,14 @@ class BlinkDebitClient
      * events. The response carries the signing `secret` exactly once — store
      * it immediately and verify deliveries with {@see WebhookSignature}.
      *
+     * The subscriptions API takes no idempotency key, so this request is not
+     * retried on a 5xx or transport failure; list subscriptions before
+     * retrying by hand to avoid a duplicate.
+     *
      * @param string   $callbackUrl Absolute https:// URL BlinkPay POSTs events to; rejected locally otherwise.
-     * @param string[] $eventTypes  One or more of the EVENT_* constants.
+     * @param string[] $eventTypes  One or more of the EVENT_* constants; rejected locally otherwise.
+     *                              The list is validated element by element, so a mistyped
+     *                              constant fails here rather than on the wire.
      *
      * @return array<string, mixed> Includes `subscription_id` and `secret`.
      *
@@ -797,12 +1148,26 @@ class BlinkDebitClient
      */
     public function createSubscription(string $callbackUrl, array $eventTypes, ?RequestOptions $options = null): array
     {
+        $eventTypes = array_values($eventTypes);
+        if ($eventTypes === []) {
+            throw new BlinkDebitApiException('Invalid event types: at least one EVENT_* constant is required.');
+        }
+        foreach ($eventTypes as $eventType) {
+            if (!in_array($eventType, self::EVENT_TYPES, true)) {
+                throw new BlinkDebitApiException(sprintf(
+                    'Invalid event type "%s": expected one of %s.',
+                    $eventType,
+                    implode(', ', self::EVENT_TYPES)
+                ));
+            }
+        }
+
         return $this->request(
             'POST',
             '/subscriptions',
             [
                 'callback_url' => Validation::httpsUrl($callbackUrl, 'callback URL'),
-                'event_types' => array_values($eventTypes),
+                'event_types' => $eventTypes,
             ],
             $this->tracingHeadersFor($options)
         );
@@ -829,12 +1194,106 @@ class BlinkDebitClient
     }
 
     // ------------------------------------------------------------------
+    // Polling internals
+    // ------------------------------------------------------------------
+
+    /**
+     * Fetches a resource once a second until $isDone returns true, for up to
+     * $maxWaitSeconds attempts. Returns null when the attempts run out.
+     * Transport and server errors on a fetch leave the outcome unknown, so
+     * they consume an attempt and polling continues; other API errors (a
+     * 404, say) propagate at once.
+     *
+     * @param callable(): array<string, mixed>     $fetch
+     * @param callable(array<string, mixed>): bool $isDone May throw an outcome exception for terminal failures.
+     *
+     * @return array<string, mixed>|null
+     *
+     * @throws BlinkDebitApiException
+     */
+    private function poll(int $maxWaitSeconds, callable $fetch, callable $isDone): ?array
+    {
+        $attempts = max(1, $maxWaitSeconds);
+        for ($attempt = 1; $attempt <= $attempts; $attempt++) {
+            try {
+                $resource = $fetch();
+                if ($isDone($resource)) {
+                    return $resource;
+                }
+            } catch (TransportException | ServerErrorException | RateLimitExceededException $exception) {
+                // Outcome unknown; the next poll reads the authoritative status.
+            }
+
+            if ($attempt < $attempts) {
+                ($this->sleep)(self::POLL_INTERVAL_MS);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * True when the consent is Authorised or Consumed; throws for the
+     * terminal failure statuses; false while it is still pending.
+     *
+     * @param array<string, mixed> $consent
+     *
+     * @throws ConsentRejectedException
+     * @throws ConsentTimeoutException
+     */
+    private function isConsentAuthorised(array $consent, string $kind, string $id): bool
+    {
+        $status = $consent['status'] ?? null;
+        $this->assertConsentNotTerminal($status, $kind, $id);
+
+        return $status === ConsentStatus::AUTHORISED || $status === ConsentStatus::CONSUMED;
+    }
+
+    /**
+     * @param mixed $status
+     *
+     * @throws ConsentRejectedException
+     * @throws ConsentTimeoutException
+     */
+    private function assertConsentNotTerminal($status, string $kind, string $id): void
+    {
+        if ($status === ConsentStatus::REJECTED || $status === ConsentStatus::REVOKED) {
+            throw new ConsentRejectedException(sprintf('The %s %s was %s.', $kind, $id, strtolower((string) $status)));
+        }
+        if ($status === ConsentStatus::GATEWAY_TIMEOUT) {
+            throw new ConsentTimeoutException(sprintf('The gateway timed out for %s %s.', $kind, $id));
+        }
+    }
+
+    /**
+     * The status of a consent's first payment, or null when none exists yet.
+     *
+     * @param array<string, mixed> $consent
+     */
+    private function firstPaymentStatus(array $consent): ?string
+    {
+        $payments = $consent['payments'] ?? null;
+        if (!is_array($payments) || $payments === []) {
+            return null;
+        }
+        $first = reset($payments);
+        $status = is_array($first) ? ($first['status'] ?? null) : null;
+
+        return is_string($status) ? $status : null;
+    }
+
+    // ------------------------------------------------------------------
     // Internals
     // ------------------------------------------------------------------
 
     private function baseUrl(): string
     {
         return $this->sandbox ? self::SANDBOX_BASE_URL : self::PRODUCTION_BASE_URL;
+    }
+
+    private function userAgentHeader(): string
+    {
+        return 'User-Agent: blink-debit-api-client-php/' . self::VERSION . ' php/' . PHP_VERSION;
     }
 
     /**
@@ -854,48 +1313,6 @@ class BlinkDebitClient
     private function cacheKeySuffix(): string
     {
         return hash('sha256', ($this->sandbox ? 'sandbox' : 'production') . '|' . $this->clientId);
-    }
-
-    /**
-     * @return array{currency: string, total: string}
-     */
-    private function nzdAmount(string $totalNzd): array
-    {
-        return [
-            'currency' => 'NZD',
-            'total' => Validation::amount($totalNzd, 'amount'),
-        ];
-    }
-
-    /**
-     * The request body shared by gateway-flow quick payments and single
-     * consents.
-     *
-     * @param array<string, string> $pcr
-     *
-     * @return array<string, mixed>
-     */
-    private function gatewayConsentPayload(
-        string $totalNzd,
-        string $redirectUri,
-        array $pcr,
-        ?string $hashedCustomerIdentifier
-    ): array {
-        $payload = [
-            'flow' => [
-                'detail' => [
-                    'type' => 'gateway',
-                    'redirect_uri' => $redirectUri,
-                ],
-            ],
-            'amount' => $this->nzdAmount($totalNzd),
-            'pcr' => $pcr,
-        ];
-        if ($hashedCustomerIdentifier !== null && $hashedCustomerIdentifier !== '') {
-            $payload['hashed_customer_identifier'] = $hashedCustomerIdentifier;
-        }
-
-        return $payload;
     }
 
     /**
@@ -945,6 +1362,40 @@ class BlinkDebitClient
     }
 
     /**
+     * Adds a generated request-id and x-correlation-id where the caller gave
+     * none, so every request is traceable in BlinkPay's logs and the same IDs
+     * accompany each retry of one logical request.
+     *
+     * @param list<string> $headers
+     *
+     * @return list<string>
+     */
+    private function withTracingIds(array $headers): array
+    {
+        foreach (['request-id', 'x-correlation-id'] as $name) {
+            if (!$this->hasHeader($headers, $name)) {
+                $headers[] = $name . ': ' . Uuid::v4();
+            }
+        }
+
+        return $headers;
+    }
+
+    /**
+     * @param list<string> $headers
+     */
+    private function hasHeader(array $headers, string $name): bool
+    {
+        foreach ($headers as $header) {
+            if (stripos($header, $name . ':') === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Appends RFC 3986 encoded query parameters, dropping null values so an
      * unset filter is omitted rather than sent as an empty string.
      *
@@ -974,6 +1425,14 @@ class BlinkDebitClient
     /**
      * Sends an authenticated request to the Blink Debit API.
      *
+     * A 401 is answered by one token refresh and retry, outside the retry
+     * budget. A 429 is retried for every method. A 5xx or transport failure
+     * is retried only when the request can be replayed safely: any GET or
+     * DELETE, and a POST that carries an idempotency key (the API replays
+     * the original response for the same key and payload). A POST without a
+     * key — a refund or subscription created without one — is not retried,
+     * since the first attempt may have succeeded.
+     *
      * @param non-empty-string          $method
      * @param array<string, mixed>|null $body
      * @param list<string>              $extraHeaders
@@ -982,24 +1441,14 @@ class BlinkDebitClient
      *
      * @throws BlinkDebitApiException
      */
-    private function request(
-        string $method,
-        string $path,
-        ?array $body = null,
-        array $extraHeaders = [],
-        bool $retrying = false
-    ): array {
-        $headers = array_merge(
-            [
-                'Authorization: Bearer ' . $this->getAccessToken($retrying),
-                'Accept: application/json',
-            ],
-            $extraHeaders
-        );
+    private function request(string $method, string $path, ?array $body = null, array $extraHeaders = []): array
+    {
+        $extraHeaders = $this->withTracingIds($extraHeaders);
+        $replayable = $method !== 'POST' || $this->hasHeader($extraHeaders, 'idempotency-key');
 
         $encodedBody = null;
         if ($body !== null) {
-            $headers[] = 'Content-Type: application/json';
+            $extraHeaders[] = 'Content-Type: application/json';
             try {
                 $encodedBody = json_encode($body, JSON_THROW_ON_ERROR);
             } catch (\JsonException $exception) {
@@ -1009,32 +1458,112 @@ class BlinkDebitClient
             }
         }
 
-        $response = $this->transport->send(
-            $method,
-            $this->baseUrl() . self::API_PATH_PREFIX . $path,
-            $headers,
-            $encodedBody,
-            $this->requestTimeout
-        );
-
-        $status = $response['status'];
-        $decoded = json_decode($response['body'], true);
-        $decoded = is_array($decoded) ? $decoded : [];
-
-        // A cached token can outlive a credential rotation; refresh once and retry.
-        if ($status === 401 && !$retrying) {
-            return $this->request($method, $path, $body, $extraHeaders, true);
-        }
-
-        if ($status >= 400) {
-            throw new BlinkDebitApiException(
-                $this->extractErrorMessage($decoded, $status, $method, $path),
-                $status,
-                $decoded
+        $refreshedToken = false;
+        while (true) {
+            $headers = array_merge(
+                [
+                    'Authorization: Bearer ' . $this->getAccessToken($refreshedToken),
+                    'Accept: application/json',
+                    $this->userAgentHeader(),
+                ],
+                $extraHeaders
             );
+
+            $response = $this->sendWithRetry(
+                $method,
+                $this->baseUrl() . self::API_PATH_PREFIX . $path,
+                $headers,
+                $encodedBody,
+                $replayable
+            );
+
+            $status = $response['status'];
+            $decoded = json_decode($response['body'], true);
+            $decoded = is_array($decoded) ? $decoded : [];
+
+            // A cached token can outlive a credential rotation; refresh once and retry.
+            if ($status === 401 && !$refreshedToken) {
+                $refreshedToken = true;
+                continue;
+            }
+
+            if ($status >= 400) {
+                throw $this->apiException($status, $decoded, $method, $path);
+            }
+
+            return $decoded;
+        }
+    }
+
+    /**
+     * Sends one logical request, retrying a 429 (always), and a 5xx or
+     * transport failure (when $replayable), on the RETRY_DELAYS_MS schedule.
+     * Returns the final response, whatever its status, for the caller to
+     * interpret; rethrows a transport failure only once the attempts are
+     * spent.
+     *
+     * @param non-empty-string $method
+     * @param list<string>     $headers
+     *
+     * @return array{status: int, body: string, headers?: array<string, string>}
+     *
+     * @throws TransportException
+     */
+    private function sendWithRetry(string $method, string $url, array $headers, ?string $body, bool $replayable): array
+    {
+        $attempt = 0;
+        while (true) {
+            try {
+                $response = $this->transport->send($method, $url, $headers, $body, $this->requestTimeout);
+            } catch (TransportException $exception) {
+                if (!$replayable || !isset(self::RETRY_DELAYS_MS[$attempt])) {
+                    throw $exception;
+                }
+                ($this->sleep)(self::RETRY_DELAYS_MS[$attempt]);
+                $attempt++;
+                continue;
+            }
+
+            $status = $response['status'];
+            $retryable = $status === 429 || ($status >= 500 && $replayable);
+            if (!$retryable || !isset(self::RETRY_DELAYS_MS[$attempt])) {
+                return $response;
+            }
+
+            ($this->sleep)($this->retryDelayMs($response, self::RETRY_DELAYS_MS[$attempt]));
+            $attempt++;
+        }
+    }
+
+    /**
+     * Honours a Retry-After header given in seconds when it is short enough
+     * to wait for; otherwise the scheduled delay.
+     *
+     * @param array{status: int, body: string, headers?: array<string, string>} $response
+     */
+    private function retryDelayMs(array $response, int $scheduledMs): int
+    {
+        $retryAfter = $response['headers']['retry-after'] ?? null;
+        if (is_string($retryAfter) && ctype_digit($retryAfter)) {
+            $seconds = (int) $retryAfter;
+            if ($seconds > 0 && $seconds <= self::MAX_RETRY_AFTER_SECONDS) {
+                return $seconds * 1000;
+            }
         }
 
-        return $decoded;
+        return $scheduledMs;
+    }
+
+    /**
+     * Maps a non-2xx API response to the exception subclass for its status.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function apiException(int $status, array $body, string $method, string $path): BlinkDebitApiException
+    {
+        $message = $this->extractErrorMessage($body, $status, $method, $path);
+
+        return $this->exceptionForStatus($status, $message, $body);
     }
 
     /**
@@ -1043,14 +1572,22 @@ class BlinkDebitClient
      *
      * @param array<string, mixed> $body
      */
-    private function tokenErrorMessage(int $status, array $body): string
+    private function tokenException(int $status, array $body): BlinkDebitApiException
     {
         if ($status === 400 || $status === 401 || $status === 403) {
-            return 'Could not authenticate with BlinkPay: check the client ID and client secret.';
+            return new UnauthorisedException(
+                'Could not authenticate with BlinkPay: check the client ID and client secret.',
+                $status,
+                $body
+            );
         }
 
         if ($status === 200) {
-            return 'The BlinkPay token endpoint returned HTTP 200 without an access token.';
+            return new BlinkDebitApiException(
+                'The BlinkPay token endpoint returned HTTP 200 without an access token.',
+                $status,
+                $body
+            );
         }
 
         $detail = '';
@@ -1061,7 +1598,34 @@ class BlinkDebitClient
             }
         }
 
-        return sprintf('The BlinkPay token endpoint returned HTTP %d%s', $status, $detail);
+        return $this->exceptionForStatus(
+            $status,
+            sprintf('The BlinkPay token endpoint returned HTTP %d%s', $status, $detail),
+            $body
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private function exceptionForStatus(int $status, string $message, array $body): BlinkDebitApiException
+    {
+        switch (true) {
+            case $status === 401:
+                return new UnauthorisedException($message, $status, $body);
+            case $status === 403:
+                return new ForbiddenException($message, $status, $body);
+            case $status === 404:
+                return new ResourceNotFoundException($message, $status, $body);
+            case $status === 409:
+                return new ConflictException($message, $status, $body);
+            case $status === 429:
+                return new RateLimitExceededException($message, $status, $body);
+            case $status >= 500:
+                return new ServerErrorException($message, $status, $body);
+            default:
+                return new BlinkDebitApiException($message, $status, $body);
+        }
     }
 
     /**

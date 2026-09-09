@@ -36,6 +36,7 @@
         "phpstan/phpstan": "^2.0"
     },
     "suggest": {
+        "ext-apcu": "Selected automatically as the token cache, so tokens survive between PHP-FPM requests without configuration",
         "psr/http-client": "To send requests through a PSR-18 HTTP client via Psr18Transport (with psr/http-factory and psr/http-message)",
         "psr/simple-cache": "To persist access tokens in a PSR-16 cache via Psr16TokenCache (Laravel, CakePHP)",
         "psr/cache": "To persist access tokens in a PSR-6 cache pool via Psr6TokenCache (Symfony)",

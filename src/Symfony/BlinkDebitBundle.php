@@ -23,8 +23,15 @@ use function Symfony\Component\DependencyInjection\Loader\Configurator\service;
  *   blink_debit:
  *     client_id: '%env(BLINKPAY_CLIENT_ID)%'
  *     client_secret: '%env(BLINKPAY_CLIENT_SECRET)%'
- *     sandbox: '%env(bool:BLINKPAY_SANDBOX)%'
+ *     # sandbox: false                                           # omit for sandbox; see below
  *     # http_client: Symfony\Component\HttpClient\Psr18Client   # optional, defaults to cURL
+ *
+ * Leave `sandbox` out to stay in sandbox. Symfony's `%env(bool:...)%`
+ * processor turns an unset or blank variable into false, i.e. production, so
+ * an environment-driven value should go through the `default:` processor with
+ * a parameter that is true: `'%env(bool:default:blink_debit.sandbox:BLINKPAY_SANDBOX)%'`
+ * with `parameters: { blink_debit.sandbox: true }`. The order matters:
+ * `default:` must see the raw variable, before `bool:` casts a blank to false.
  *
  * Older Symfony versions can wire the same three services by hand; see the
  * README.

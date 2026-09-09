@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace BlinkPay\BlinkDebit\Laravel;
 
 use BlinkPay\BlinkDebit\BlinkDebitClient;
+use BlinkPay\BlinkDebit\Env;
 use BlinkPay\BlinkDebit\HttpTransportInterface;
 use BlinkPay\BlinkDebit\Psr\Psr16TokenCache;
 use BlinkPay\BlinkDebit\TokenCacheInterface;
@@ -50,7 +51,7 @@ class BlinkDebitServiceProvider extends ServiceProvider
             $client = new BlinkDebitClient(
                 (string) ($config['client_id'] ?? ''),
                 (string) ($config['client_secret'] ?? ''),
-                (bool) ($config['sandbox'] ?? true),
+                Env::bool($config['sandbox'] ?? null, true),
                 $tokenCache,
                 $transport
             );

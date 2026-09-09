@@ -7,13 +7,15 @@ namespace BlinkPay\BlinkDebit;
 /**
  * String cache used for access tokens and granted scopes.
  *
- * The default implementation is per-process only; web integrations should
- * back this with a persistent cache so tokens survive between requests:
- * {@see \BlinkPay\BlinkDebit\Psr\Psr16TokenCache} for Laravel, CakePHP and
- * any PSR-16 store, {@see \BlinkPay\BlinkDebit\Psr\Psr6TokenCache} for
- * Symfony and any PSR-6 pool, or a bespoke implementation over a platform
- * cache (Magento, PrestaShop, WordPress transients). Values must be treated
- * as secrets: never store them anywhere that is logged or exported.
+ * The client defaults to {@see ApcuTokenCache} when APCu is enabled and to
+ * the per-process {@see InMemoryTokenCache} otherwise. Web integrations
+ * without APCu should back this with a persistent cache so tokens survive
+ * between requests: {@see \BlinkPay\BlinkDebit\Psr\Psr16TokenCache} for
+ * Laravel, CakePHP and any PSR-16 store,
+ * {@see \BlinkPay\BlinkDebit\Psr\Psr6TokenCache} for Symfony and any PSR-6
+ * pool, or a bespoke implementation over a platform cache (Magento,
+ * PrestaShop, WordPress transients). Values must be treated as secrets: never
+ * store them anywhere that is logged, exported or written to disk.
  */
 interface TokenCacheInterface
 {

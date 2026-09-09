@@ -8,7 +8,8 @@ on:
 jobs:
   packagist_update:
     runs-on: ubuntu-latest
-    if: github.event.release.target_commitish == 'master'
+    # Releases must be cut from master; a manual dispatch runs from whichever ref it was started on.
+    if: github.event_name == 'workflow_dispatch' || github.event.release.target_commitish == 'master'
     steps:
       - uses: actions/checkout@v7
       - name: Setup PHP
@@ -20,6 +21,7 @@ jobs:
       - name: Validate composer.json
         run: composer validate --strict
       - name: Verify the release tag is a version
+        if: github.event_name == 'release'
         run: |
           case "${{ github.event.release.tag_name }}" in
             [0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*) echo "Releasing ${{ github.event.release.tag_name }}" ;;

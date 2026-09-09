@@ -61,6 +61,17 @@ final class Validation
      */
     public static function headerText(string $value, string $label): string
     {
+        return self::nonEmpty($value, $label);
+    }
+
+    /**
+     * Returns the trimmed value when it is non-empty and free of control
+     * characters, else throws.
+     *
+     * @throws BlinkDebitApiException
+     */
+    public static function nonEmpty(string $value, string $label): string
+    {
         $value = trim($value);
         if ($value === '' || preg_match('/[\x00-\x1F\x7F]/', $value)) {
             throw new BlinkDebitApiException(
@@ -88,16 +99,43 @@ final class Validation
     }
 
     /**
-     * Returns the value when it is an absolute https:// URL, else throws.
+     * Returns the value when it is an absolute https:// URL, else throws. For
+     * callbacks BlinkPay or a bank will call from the internet.
      *
      * @throws BlinkDebitApiException
      */
     public static function httpsUrl(string $value, string $label): string
     {
+        return self::url($value, $label, ['https']);
+    }
+
+    /**
+     * Returns the value when it is an absolute http:// or https:// URL, else
+     * throws. For redirect URIs the customer's browser is sent to, where a
+     * plain http:// localhost address is legitimate during development.
+     *
+     * @throws BlinkDebitApiException
+     */
+    public static function webUrl(string $value, string $label): string
+    {
+        return self::url($value, $label, ['http', 'https']);
+    }
+
+    /**
+     * @param list<string> $schemes
+     *
+     * @throws BlinkDebitApiException
+     */
+    private static function url(string $value, string $label, array $schemes): string
+    {
         $value = trim($value);
         $scheme = parse_url($value, PHP_URL_SCHEME);
-        if (filter_var($value, FILTER_VALIDATE_URL) === false || !is_string($scheme) || strtolower($scheme) !== 'https') {
-            throw new BlinkDebitApiException(sprintf('Invalid %s: expected an absolute https:// URL.', $label));
+        if (filter_var($value, FILTER_VALIDATE_URL) === false || !is_string($scheme) || !in_array(strtolower($scheme), $schemes, true)) {
+            throw new BlinkDebitApiException(sprintf(
+                'Invalid %s: expected an absolute %s URL.',
+                $label,
+                implode(':// or ', $schemes) . '://'
+            ));
         }
 
         return $value;
