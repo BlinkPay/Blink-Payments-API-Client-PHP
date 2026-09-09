@@ -106,6 +106,12 @@ class BlinkDebitClient
      */
     private const MAX_RETRY_AFTER_SECONDS = 30;
 
+    /**
+     * RFC 7231 HTTP-date, e.g. "Wed, 21 Oct 2026 07:28:00 GMT". Spelt out because
+     * PHP 8.5 deprecates the DATE_RFC7231 constant.
+     */
+    private const HTTP_DATE_FORMAT = 'D, d M Y H:i:s \G\M\T';
+
     /** Interval between status polls in the await helpers. */
     private const POLL_INTERVAL_MS = 1000;
 
@@ -1587,23 +1593,43 @@ class BlinkDebitClient
     }
 
     /**
-     * The delay before the next attempt: a Retry-After header given in
-     * seconds when present, otherwise the scheduled delay. Null when the
-     * server asked for a longer wait than a PHP request should hold, so the
-     * caller gives up rather than retrying sooner than asked.
+     * The delay before the next attempt: the Retry-After header when present
+     * and in the future, otherwise the scheduled delay. Null when the server
+     * asked for a longer wait than a PHP request should hold, so the caller
+     * gives up rather than retrying sooner than asked.
      *
      * @param array{status: int, body: string, headers?: array<string, string>} $response
      */
     private function retryDelayMs(array $response, int $scheduledMs): ?int
     {
-        $retryAfter = $response['headers']['retry-after'] ?? null;
-        if (!is_string($retryAfter) || !ctype_digit($retryAfter) || (int) $retryAfter <= 0) {
+        $seconds = self::retryAfterSeconds($response['headers']['retry-after'] ?? null);
+        if ($seconds === null || $seconds <= 0) {
             return $scheduledMs;
         }
 
-        $seconds = (int) $retryAfter;
-
         return $seconds <= self::MAX_RETRY_AFTER_SECONDS ? $seconds * 1000 : null;
+    }
+
+    /**
+     * Reads Retry-After in either form RFC 7231 allows: a delay in seconds, or
+     * an HTTP-date, which an intermediary such as a CDN may send in place of
+     * the API's own seconds. Null when absent or unparseable.
+     */
+    private static function retryAfterSeconds(?string $header): ?int
+    {
+        if ($header === null) {
+            return null;
+        }
+        if (ctype_digit($header)) {
+            return (int) $header;
+        }
+
+        $date = \DateTimeImmutable::createFromFormat(self::HTTP_DATE_FORMAT, $header, new \DateTimeZone('UTC'));
+        if ($date === false) {
+            return null;
+        }
+
+        return $date->getTimestamp() - time();
     }
 
     /**

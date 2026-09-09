@@ -34,11 +34,12 @@ final class Pcr
      * @return array{particulars: string, code?: string, reference?: string}
      *
      * @throws BlinkDebitApiException When particulars is blank or any field is too long or has disallowed characters.
+     *                               Surrounding spaces are legal per the spec and are kept, not trimmed.
      */
     public static function build(string $particulars, string $code = '', string $reference = ''): array
     {
         $particulars = self::validateField($particulars, 'particulars');
-        if ($particulars === '') {
+        if (trim($particulars) === '') {
             throw new BlinkDebitApiException('Invalid PCR: particulars is required.');
         }
 
@@ -101,7 +102,6 @@ final class Pcr
      */
     private static function validateField(string $value, string $label): string
     {
-        $value = trim($value);
         if (!self::isValid($value)) {
             throw new BlinkDebitApiException(sprintf(
                 'Invalid PCR %s "%s": up to %d characters from letters, digits, space and - & # ? : _ / , . \' only. '

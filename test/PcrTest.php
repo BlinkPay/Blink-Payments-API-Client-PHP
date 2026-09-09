@@ -23,10 +23,14 @@ class PcrTest extends TestCase
         $this->assertSame(['particulars' => 'Shop', 'reference' => 'INV-1'], Pcr::build('Shop', '', 'INV-1'));
     }
 
-    public function testBuildTrimsButNeverTruncates(): void
+    public function testBuildPassesValuesThroughUnchanged(): void
     {
-        $this->assertSame(['particulars' => 'Twelve chars'], Pcr::build(' Twelve chars '));
+        // Surrounding spaces are legal per the spec, so the reconciliation text is kept exactly as given.
+        $this->assertSame(['particulars' => ' Shop ', 'code' => ' 42'], Pcr::build(' Shop ', ' 42'));
+    }
 
+    public function testBuildNeverTruncates(): void
+    {
         $this->expectException(BlinkDebitApiException::class);
         $this->expectExceptionMessage('Invalid PCR reference "Reference 123456"');
         Pcr::build('Shop', '', 'Reference 123456');

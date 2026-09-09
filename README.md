@@ -306,7 +306,7 @@ try {
 
 ### Retries
 - A `401` on an authenticated call is retried once with a fresh token, so a credential rotation does not strand cached tokens. A second `401` raises `UnauthorisedException`.
-- A `429` is retried up to twice more (after 1 s, then 5 s), or after the `Retry-After` the server sent when it is 30 s or less; a longer `Retry-After` ends the retries at once, and the typed exception is thrown, rather than retrying sooner than asked. This applies to every request, including the token fetch, because a rate-limited request was never processed.
+- A `429` is retried up to twice more (after 1 s, then 5 s), or after the `Retry-After` the server sent (in seconds or as an HTTP-date) when it is 30 s or less; a longer `Retry-After` ends the retries at once, and the typed exception is thrown, rather than retrying sooner than asked. This applies to every request, including the token fetch, because a rate-limited request was never processed.
 - A `5xx` or transport failure is retried on the same schedule **only when the request can be replayed safely**: any `GET` or `DELETE`, the token fetch, and a `POST` that carries an idempotency key (the API replays the original response). A `POST` without a key, such as a refund created without one or a subscription, is not retried, since the first attempt may have succeeded; the exception tells you so.
 - Invalid IDs, non-UUID idempotency keys, malformed amounts, over-long PCR text, non-HTTPS callback URLs and unsafe header values are rejected locally, before any request is sent and before any token is fetched.
 - A token-endpoint failure names the HTTP status and the server's message; only `400`/`401`/`403` are reported as a credential problem, so a rate limit or outage does not send you to rotate secrets.
@@ -459,6 +459,14 @@ $response = $client->createQuickPayment(
 ```php
 $response = $client->createQuickPayment(
     QuickPaymentRequest::build(Flow::redirect(Bank::ANZ, $redirectUri), $total, Pcr::build($particulars, $code, $reference)),
+    $idempotencyKey
+);
+```
+#### Redirect Flow - Native App
+The redirect URI may be a deep or universal link. Setting `redirect_to_app` (the third argument of `Flow::redirect()` and of `Flow::gateway()`) makes the bank return `code` and `state` to the app, which must pass them on to `https://debit.blinkpay.co.nz/bank/1.0/return?state={state}&code={code}&redirect=false`, together with any `error` parameters, to complete the consent.
+```php
+$response = $client->createQuickPayment(
+    QuickPaymentRequest::build(Flow::redirect(Bank::ANZ, 'myapp://blink/return', true), $total, Pcr::build($particulars, $code, $reference)),
     $idempotencyKey
 );
 ```

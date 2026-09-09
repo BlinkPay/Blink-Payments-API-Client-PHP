@@ -49,7 +49,6 @@ class CurlTransport implements HttpTransportInterface
         $responseBody = curl_exec($handle);
         $curlError = curl_error($handle);
         $statusCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
-        curl_close($handle);
 
         if ($responseBody === false) {
             throw new TransportException(sprintf('The Blink Debit API could not be reached: %s', $curlError));

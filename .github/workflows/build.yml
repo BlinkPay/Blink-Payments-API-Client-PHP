@@ -67,8 +67,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 7.4 is the declared floor; 8.x covers every supported release line.
-        php-version: [ '7.4', '8.1', '8.2', '8.3', '8.4' ]
+        # 7.4 is the declared floor; 8.x covers every supported release line, so a
+        # deprecation in a new PHP release surfaces here rather than in production.
+        php-version: [ '7.4', '8.1', '8.2', '8.3', '8.4', '8.5' ]
     steps:
       - uses: actions/checkout@v7
       - name: Setup PHP ${{ matrix.php-version }}

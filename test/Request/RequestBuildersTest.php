@@ -64,6 +64,35 @@ class RequestBuildersTest extends TestCase
         );
     }
 
+    public function testRedirectToAppIsEmittedOnlyWhenSet(): void
+    {
+        $this->assertSame(
+            ['detail' => ['type' => 'redirect', 'bank' => 'ANZ', 'redirect_uri' => 'myapp://blink/return', 'redirect_to_app' => true]],
+            Flow::redirect(Bank::ANZ, 'myapp://blink/return', true)
+        );
+        $this->assertSame(
+            ['detail' => [
+                'type' => 'gateway',
+                'redirect_uri' => 'https://shop.example/return',
+                'redirect_to_app' => true,
+                'flow_hint' => ['type' => 'redirect', 'bank' => 'BNZ'],
+            ]],
+            Flow::gateway('https://shop.example/return', Flow::redirectHint(Bank::BNZ), true)
+        );
+        $this->assertArrayNotHasKey('redirect_to_app', Flow::redirect(Bank::ANZ, 'https://shop.example/return', false)['detail']);
+        $this->assertArrayNotHasKey('redirect_to_app', Flow::gateway('https://shop.example/return', null, false)['detail']);
+    }
+
+    public function testRedirectUriAcceptsAppLinksButNotRelativePaths(): void
+    {
+        $this->assertSame('myapp://return', Flow::gateway('myapp://return')['detail']['redirect_uri']);
+        $this->assertSame('http://localhost:8080/return', Flow::redirect(Bank::BNZ, ' http://localhost:8080/return ')['detail']['redirect_uri']);
+
+        $this->expectException(BlinkDebitApiException::class);
+        $this->expectExceptionMessage('Invalid redirect URI: expected an absolute URI');
+        Flow::redirect(Bank::BNZ, '/return');
+    }
+
     public function testFlowValidationFailsLocally(): void
     {
         $attempts = [

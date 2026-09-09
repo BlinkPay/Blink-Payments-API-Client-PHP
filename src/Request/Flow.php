@@ -12,12 +12,13 @@ use BlinkPay\BlinkDebit\Validation;
  * enduring consents. Bank and identifier-type values are not checked against
  * a fixed list, so a newly onboarded bank works without an SDK release; the
  * API rejects unknown values with a 400. Redirect URIs may be http:// for
- * local development; callback URLs, which BlinkPay or a bank call from the
- * internet, must be https://.
+ * local development, or an app deep link when $redirectToApp is set; callback
+ * URLs, which BlinkPay or a bank call from the internet, must be https://.
  *
  *   Flow::gateway($returnUrl)
  *   Flow::gateway($returnUrl, Flow::redirectHint(Bank::BNZ))
  *   Flow::redirect(Bank::ANZ, $returnUrl)
+ *   Flow::redirect(Bank::ANZ, 'myapp://blink/return', true)
  *   Flow::decoupled(Bank::PNZ, IdentifierType::MOBILE_NUMBER, '+64-21-...', $callbackUrl)
  */
 final class Flow
@@ -31,18 +32,22 @@ final class Flow
      * Blink's hosted gateway chooses the bank (and card, where enabled). An
      * optional flow hint pre-selects a bank and flow for the customer.
      *
-     * @param array<string, string>|null $flowHint From redirectHint() or decoupledHint().
+     * @param array<string, string>|null $flowHint      From redirectHint() or decoupledHint().
+     * @param bool                       $redirectToApp The redirect URI is an app link; see redirect().
      *
      * @return array{detail: array<string, mixed>}
      *
      * @throws \BlinkPay\BlinkDebit\BlinkDebitApiException
      */
-    public static function gateway(string $redirectUri, ?array $flowHint = null): array
+    public static function gateway(string $redirectUri, ?array $flowHint = null, bool $redirectToApp = false): array
     {
         $detail = [
             'type' => FlowType::GATEWAY,
-            'redirect_uri' => Validation::webUrl($redirectUri, 'redirect URI'),
+            'redirect_uri' => Validation::redirectUri($redirectUri, 'redirect URI'),
         ];
+        if ($redirectToApp) {
+            $detail['redirect_to_app'] = true;
+        }
         if ($flowHint !== null) {
             $detail['flow_hint'] = $flowHint;
         }
@@ -54,17 +59,29 @@ final class Flow
      * The customer is sent straight to the named bank and returned to the
      * redirect URI afterwards.
      *
-     * @return array{detail: array<string, string>}
+     * With $redirectToApp the bank returns the customer to a native app
+     * instead of a web page: the redirect URI is a deep or universal link,
+     * and the app receives `code` and `state` parameters which it must pass on
+     * to https://debit.blinkpay.co.nz/bank/1.0/return?state={state}&code={code}&redirect=false
+     * (with any `error` parameters) to complete the consent. Omitted from the
+     * body when false, the API's default.
+     *
+     * @return array{detail: array<string, string|bool>}
      *
      * @throws \BlinkPay\BlinkDebit\BlinkDebitApiException
      */
-    public static function redirect(string $bank, string $redirectUri): array
+    public static function redirect(string $bank, string $redirectUri, bool $redirectToApp = false): array
     {
-        return ['detail' => [
+        $detail = [
             'type' => FlowType::REDIRECT,
             'bank' => self::nonEmpty($bank, 'bank'),
-            'redirect_uri' => Validation::webUrl($redirectUri, 'redirect URI'),
-        ]];
+            'redirect_uri' => Validation::redirectUri($redirectUri, 'redirect URI'),
+        ];
+        if ($redirectToApp) {
+            $detail['redirect_to_app'] = true;
+        }
+
+        return ['detail' => $detail];
     }
 
     /**

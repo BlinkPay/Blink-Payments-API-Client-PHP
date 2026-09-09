@@ -109,35 +109,29 @@ final class Validation
      */
     public static function httpsUrl(string $value, string $label): string
     {
-        return self::url($value, $label, ['https']);
+        $value = trim($value);
+        if (filter_var($value, FILTER_VALIDATE_URL) === false || strtolower((string) parse_url($value, PHP_URL_SCHEME)) !== 'https') {
+            throw new BlinkDebitApiException(sprintf('Invalid %s: expected an absolute https:// URL.', $label));
+        }
+
+        return $value;
     }
 
     /**
-     * Returns the value when it is an absolute http:// or https:// URL, else
-     * throws. For redirect URIs the customer's browser is sent to, where a
-     * plain http:// localhost address is legitimate during development.
+     * Returns the value when it is an absolute URI, else throws. For the
+     * redirect URI the customer is sent back to: normally https://, a plain
+     * http:// localhost address during development, or an app deep link such
+     * as myapp://return when the flow sets redirect_to_app.
      *
      * @throws BlinkDebitApiException
      */
-    public static function webUrl(string $value, string $label): string
-    {
-        return self::url($value, $label, ['http', 'https']);
-    }
-
-    /**
-     * @param list<string> $schemes
-     *
-     * @throws BlinkDebitApiException
-     */
-    private static function url(string $value, string $label, array $schemes): string
+    public static function redirectUri(string $value, string $label): string
     {
         $value = trim($value);
-        $scheme = parse_url($value, PHP_URL_SCHEME);
-        if (filter_var($value, FILTER_VALIDATE_URL) === false || !is_string($scheme) || !in_array(strtolower($scheme), $schemes, true)) {
+        if (filter_var($value, FILTER_VALIDATE_URL) === false) {
             throw new BlinkDebitApiException(sprintf(
-                'Invalid %s: expected an absolute %s URL.',
-                $label,
-                implode(':// or ', $schemes) . '://'
+                'Invalid %s: expected an absolute URI such as https://shop.example/return or an app link such as myapp://return.',
+                $label
             ));
         }
 

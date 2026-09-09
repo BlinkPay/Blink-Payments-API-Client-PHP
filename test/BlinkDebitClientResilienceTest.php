@@ -56,6 +56,11 @@ class BlinkDebitClientResilienceTest extends TestCase
         return $client;
     }
 
+    private static function httpDate(int $timestamp): string
+    {
+        return gmdate('D, d M Y H:i:s \G\M\T', $timestamp);
+    }
+
     private function queueToken(): void
     {
         $this->transport->queue(200, ['access_token' => 'tok', 'expires_in' => 3600, 'scope' => 'view:metadata']);
@@ -97,6 +102,35 @@ class BlinkDebitClientResilienceTest extends TestCase
         $this->client()->getMeta();
 
         $this->assertSame([2000, 5000], $this->sleeps);
+    }
+
+    public function testRetryAfterAsAnHttpDateIsHonoured(): void
+    {
+        $this->queueToken();
+        $this->transport->queue(429, [], ['retry-after' => self::httpDate(time() + 10)]);
+        $this->transport->queue(429, [], ['retry-after' => self::httpDate(time() - 60)]);   // already past: schedule wins
+        $this->transport->queue(200, []);
+
+        $this->client()->getMeta();
+
+        $this->assertCount(2, $this->sleeps);
+        // The second boundary is clock-based, so allow for the seconds ticking over between header and check.
+        $this->assertGreaterThanOrEqual(9000, $this->sleeps[0]);
+        $this->assertLessThanOrEqual(10000, $this->sleeps[0]);
+        $this->assertSame(5000, $this->sleeps[1]);
+    }
+
+    public function testLongRetryAfterAsAnHttpDateEndsTheRetries(): void
+    {
+        $this->queueToken();
+        $this->transport->queue(429, ['message' => 'slow down'], ['retry-after' => self::httpDate(time() + 600)]);
+
+        $this->expectException(RateLimitExceededException::class);
+        try {
+            $this->client()->getMeta();
+        } finally {
+            $this->assertSame([], $this->sleeps, 'Never retried sooner than the server asked.');
+        }
     }
 
     public function testLongRetryAfterEndsTheRetriesInsteadOfRetryingSooner(): void
