@@ -2,7 +2,7 @@
 
 # Blink Payments API Client for PHP
 [![CI](https://github.com/BlinkPay/Blink-Payments-API-Client-PHP/actions/workflows/build.yml/badge.svg)](https://github.com/BlinkPay/Blink-Payments-API-Client-PHP/actions/workflows/build.yml)
-[![Packagist](https://img.shields.io/packagist/v/blinkpay/blink-debit-api-client-php.svg?label=Packagist)](https://packagist.org/packages/blinkpay/blink-debit-api-client-php)
+[![Packagist](https://img.shields.io/packagist/v/blinkpay-nz/blink-debit-api-client-php.svg?label=Packagist)](https://packagist.org/packages/blinkpay-nz/blink-debit-api-client-php)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=blink-debit-api-client-php&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=blink-debit-api-client-php)
 [![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=blink-debit-api-client-php&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=blink-debit-api-client-php)
 [![Snyk security](https://img.shields.io/badge/Snyk_security-monitored-9043C6)](https://app.snyk.io/org/blinkpay-zw9/project/99a2aaa5-fdc9-4633-acd1-0590a6e0aebf)
@@ -83,7 +83,7 @@ Optional, for the integrations:
 
 ## Adding the dependency
 ```shell
-composer require blinkpay/blink-debit-api-client-php
+composer require blinkpay-nz/blink-debit-api-client-php
 ```
 
 ## Quick Start
@@ -413,7 +413,7 @@ The first `getQuickPayment()` call after the consumer authorises **initiates the
 - Revoke an abandoned **enduring consent** with `revokeEnduringConsent()`; it grants ongoing access, so do not leave it open (`awaitAuthorisedEnduringConsent()` does this on timeout).
 
 ## Individual API Call Examples
-Amounts are NZD decimal strings with one or two decimals, such as `'12.50'`. Statement text is built with `Pcr::build($particulars, $code, $reference)`, in the API's own field order, which validates against the banks' 12-character rules and passes values through unchanged; `Pcr::sanitise()` is the opt-in lossy alternative for free text. Request bodies are built with the classes in `BlinkPay\BlinkDebit\Request` (`Flow`, `QuickPaymentRequest`, `SingleConsentRequest`, `EnduringConsentRequest`, `FixedRecurringPaymentRequest`, `Amount`), which return the API's snake_case arrays, so you can also hand-build or adjust a body exactly as the [API reference](https://merchants.blinkpay.co.nz) defines it. Banks, periods, identifier types, flow types and statuses have constants in `BlinkPay\BlinkDebit\Enum`.
+Amounts are NZD decimal strings with one or two decimals, such as `'12.50'`. Statement text is built with `Pcr::build($particulars, $code, $reference)`, in the API's own field order, which validates against the banks' 12-character rules and passes values through unchanged; `Pcr::sanitise()` is the opt-in lossy alternative for free text. Request bodies are built with the classes in `BlinkPay\BlinkDebit\Request` (`Flow`, `QuickPaymentRequest`, `SingleConsentRequest`, `EnduringConsentRequest`, `FixedRecurringPaymentRequest`, `Amount`), which return the API's snake_case arrays, so you can also hand-build or adjust a body exactly as the [API reference](https://merchants.blinkpay.co.nz/docs) defines it. Banks, periods, identifier types, flow types and statuses have constants in `BlinkPay\BlinkDebit\Enum`.
 
 ```php
 use BlinkPay\BlinkDebit\Enum\Bank;
