@@ -1,8 +1,9 @@
 {
-    "name": "blinkpay/blink-debit-api-client-php",
+    "name": "blinkpay-nz/blink-debit-api-client-php",
     "description": "Framework-agnostic PHP client for the Blink Debit API (Blink PayNow and Blink AutoPay): consents, quick payments, payments, refunds, fixed recurring payments, transactions and webhooks, with PSR-18/PSR-16/PSR-6 adapters and Laravel, Symfony and CakePHP glue",
     "type": "library",
     "license": "MIT",
+    "homepage": "https://www.blinkpay.co.nz",
     "keywords": [
         "blinkpay",
         "blink-debit",
@@ -17,9 +18,22 @@
     "authors": [
         {
             "name": "BlinkPay",
-            "homepage": "https://www.blinkpay.co.nz"
+            "email": "support@blinkpay.co.nz",
+            "homepage": "https://www.blinkpay.co.nz",
+            "role": "Company"
+        },
+        {
+            "name": "Rey Vincent Babilonia",
+            "email": "rey.babilonia@blinkpay.co.nz",
+            "role": "Developer"
         }
     ],
+    "support": {
+        "email": "support@blinkpay.co.nz",
+        "issues": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP/issues",
+        "source": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP",
+        "docs": "https://merchants.blinkpay.co.nz/resources"
+    },
     "require": {
         "php": "^7.4 || ^8.0",
         "ext-curl": "*",
