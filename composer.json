@@ -32,7 +32,7 @@
         "email": "support@blinkpay.co.nz",
         "issues": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP/issues",
         "source": "https://github.com/BlinkPay/Blink-Payments-API-Client-PHP",
-        "docs": "https://merchants.blinkpay.co.nz/docs"
+        "docs": "https://merchants.blinkpay.co.nz/resources"
     },
     "require": {
         "php": "^7.4 || ^8.0",
