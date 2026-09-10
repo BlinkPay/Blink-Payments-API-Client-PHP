@@ -1,3 +1,5 @@
+![BlinkPay](https://raw.githubusercontent.com/BlinkPay/Blink-Payments-API-Client-PHP/master/.github/assets/banner.png)
+
 # Blink Payments API Client for PHP
 [![CI](https://github.com/BlinkPay/Blink-Payments-API-Client-PHP/actions/workflows/build.yml/badge.svg)](https://github.com/BlinkPay/Blink-Payments-API-Client-PHP/actions/workflows/build.yml)
 [![Packagist](https://img.shields.io/packagist/v/blinkpay/blink-debit-api-client-php.svg?label=Packagist)](https://packagist.org/packages/blinkpay/blink-debit-api-client-php)
@@ -411,7 +413,7 @@ The first `getQuickPayment()` call after the consumer authorises **initiates the
 - Revoke an abandoned **enduring consent** with `revokeEnduringConsent()`; it grants ongoing access, so do not leave it open (`awaitAuthorisedEnduringConsent()` does this on timeout).
 
 ## Individual API Call Examples
-Amounts are NZD decimal strings with one or two decimals, such as `'12.50'`. Statement text is built with `Pcr::build($particulars, $code, $reference)`, in the API's own field order, which validates against the banks' 12-character rules and passes values through unchanged; `Pcr::sanitise()` is the opt-in lossy alternative for free text. Request bodies are built with the classes in `BlinkPay\BlinkDebit\Request` (`Flow`, `QuickPaymentRequest`, `SingleConsentRequest`, `EnduringConsentRequest`, `FixedRecurringPaymentRequest`, `Amount`), which return the API's snake_case arrays, so you can also hand-build or adjust a body exactly as the [API reference](https://docs.blinkpay.co.nz) defines it. Banks, periods, identifier types, flow types and statuses have constants in `BlinkPay\BlinkDebit\Enum`.
+Amounts are NZD decimal strings with one or two decimals, such as `'12.50'`. Statement text is built with `Pcr::build($particulars, $code, $reference)`, in the API's own field order, which validates against the banks' 12-character rules and passes values through unchanged; `Pcr::sanitise()` is the opt-in lossy alternative for free text. Request bodies are built with the classes in `BlinkPay\BlinkDebit\Request` (`Flow`, `QuickPaymentRequest`, `SingleConsentRequest`, `EnduringConsentRequest`, `FixedRecurringPaymentRequest`, `Amount`), which return the API's snake_case arrays, so you can also hand-build or adjust a body exactly as the [API reference](https://merchants.blinkpay.co.nz) defines it. Banks, periods, identifier types, flow types and statuses have constants in `BlinkPay\BlinkDebit\Enum`.
 
 ```php
 use BlinkPay\BlinkDebit\Enum\Bank;
