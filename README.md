@@ -5,7 +5,7 @@
 [![Packagist](https://img.shields.io/packagist/v/blinkpay-nz/blink-debit-api-client-php.svg?label=Packagist)](https://packagist.org/packages/blinkpay-nz/blink-debit-api-client-php)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=blink-debit-api-client-php&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=blink-debit-api-client-php)
 [![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=blink-debit-api-client-php&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=blink-debit-api-client-php)
-[![Snyk security](https://snyk.io/test/github/BlinkPay/Blink-Payments-API-Client-PHP/badge.svg)](https://snyk.io/test/github/BlinkPay/Blink-Payments-API-Client-PHP)
+[![Snyk security](https://img.shields.io/badge/Snyk_security-monitored-9043C6)](https://app.snyk.io/org/blinkpay-zw9/project/99a2aaa5-fdc9-4633-acd1-0590a6e0aebf)
 
 # Table of Contents
 1. [Introduction](#introduction)
