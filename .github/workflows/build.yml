@@ -9,6 +9,8 @@ on:
 
 jobs:
   snyk:
+    # Snyk test quota is limited, so only monitor what lands on master.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,10 +39,10 @@ jobs:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
           SNYK_ORG: blinkpay-zw9
           SNYK_PROJECT_NAME: Blink-Payments-API-Client-PHP
+        # Advisory only: a Snyk failure, including an exhausted test quota, must not fail the build.
         continue-on-error: true
 
   static_analysis:
-    needs: snyk
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
