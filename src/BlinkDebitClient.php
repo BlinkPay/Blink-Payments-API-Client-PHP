@@ -42,7 +42,7 @@ use BlinkPay\BlinkDebit\Request\SingleConsentRequest;
 class BlinkDebitClient
 {
     /** SDK version, sent in the User-Agent header so support can identify SDK traffic. */
-    public const VERSION = '1.0.1';
+    public const VERSION = '1.0.2';
 
     public const PRODUCTION_BASE_URL = 'https://debit.blinkpay.co.nz';
     public const SANDBOX_BASE_URL = 'https://sandbox.debit.blinkpay.co.nz';

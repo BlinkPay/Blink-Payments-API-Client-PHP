@@ -5,7 +5,7 @@
 [![Packagist](https://img.shields.io/packagist/v/blinkpay-nz/blink-debit-api-client-php.svg?label=Packagist)](https://packagist.org/packages/blinkpay-nz/blink-debit-api-client-php)
 [![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=blink-debit-api-client-php&metric=security_rating)](https://sonarcloud.io/summary/new_code?id=blink-debit-api-client-php)
 [![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=blink-debit-api-client-php&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=blink-debit-api-client-php)
-[![Snyk security](https://img.shields.io/badge/Snyk_security-monitored-9043C6)](https://app.snyk.io/org/blinkpay-zw9/project/99a2aaa5-fdc9-4633-acd1-0590a6e0aebf)
+[![Snyk security](https://img.shields.io/badge/Snyk_security-monitored-9043C6)](https://app.snyk.io/org/blinkpay-zw9/project/197b03b3-02fd-47b5-8386-add6562935f2)
 
 # Table of Contents
 1. [Introduction](#introduction)
@@ -58,7 +58,7 @@ composer test        # PHPUnit
 composer analyse     # PHPStan, level 8
 ```
 
-The suite is fully offline: HTTP is replaced by an in-memory transport and sleeps are stubbed, so no sandbox credentials are needed and the retry and polling tests run instantly. The PSR adapters are covered with in-memory PSR-6/PSR-16 doubles and `nyholm/psr7`. The APCu cache tests run wherever the extension is enabled for the CLI (`apc.enable_cli=1`) and are skipped elsewhere.
+The suite needs no network or sandbox credentials: HTTP is replaced by an in-memory transport (one test drives the real cURL transport at a closed loopback port to cover the failure path) and sleeps are stubbed, so the retry and polling tests run instantly. The PSR adapters are covered with in-memory PSR-6/PSR-16 doubles and `nyholm/psr7`. The APCu cache tests run wherever the extension is enabled for the CLI (`apc.enable_cli=1`) and are skipped elsewhere.
 
 The Laravel, Symfony and CakePHP glue is tested against the real frameworks from `test-frameworks/`, a separate Composer project (PHP 8.2+) that boots each container, resolves the client and checks that the sandbox flag and token cache are wired as documented. It also runs PHPStan over the glue with the frameworks installed, which the main analysis cannot do:
 ```bash
@@ -67,7 +67,7 @@ composer update
 composer analyse
 composer test
 ```
-CI runs both suites on every push and pull request.
+CI runs both suites on every pull request and on every push to `master`.
 
 ## Minimum Requirements
 - PHP 7.4 or later (8.1+ recommended; the Symfony bundle needs Symfony 6.1+ and therefore PHP 8.1+)
@@ -391,7 +391,7 @@ Four helpers poll once a second for up to `$maxWaitSeconds` attempts and turn th
 | --- | --- | --- | --- |
 | `awaitSuccessfulQuickPayment($id, $seconds)` | The quick payment's payment is `AcceptedSettlementCompleted` | `ConsentRejectedException`, `ConsentTimeoutException` (gateway timeout), `PaymentRejectedException` | Not yet authorised: **revokes** the quick payment, throws `ConsentTimeoutException`. Authorised but unsettled: throws `PaymentTimeoutException`, revokes nothing |
 | `awaitAuthorisedSingleConsent($id, $seconds)` | Consent is `Authorised` (or `Consumed`) | `ConsentRejectedException`, `ConsentTimeoutException` | Throws `ConsentTimeoutException`; nothing to revoke, no money moves on an unpaid single consent |
-| `awaitAuthorisedEnduringConsent($id, $seconds)` | Consent is `Authorised` | `ConsentRejectedException`, `ConsentTimeoutException` | **Revokes** the consent (it grants ongoing access), throws `ConsentTimeoutException` |
+| `awaitAuthorisedEnduringConsent($id, $seconds)` | Consent is `Authorised` (or `Consumed`) | `ConsentRejectedException`, `ConsentTimeoutException` | **Revokes** the consent (it grants ongoing access), throws `ConsentTimeoutException` |
 | `awaitSuccessfulPayment($id, $seconds)` | Payment is `AcceptedSettlementCompleted` | `PaymentRejectedException` | Throws `PaymentTimeoutException`; the payment may still settle, keep polling or use the webhook |
 
 A failed revoke is attached as the exception's `getPrevious()`. If the revoke is refused with `409` because the customer authorised in the moment after the last poll, the quick payment is re-read and reported as settled or as `PaymentTimeoutException`, never as abandoned. A poll that fails with a transport, `5xx` or `429` error leaves the outcome unknown, so it is absorbed and the next poll reads the authoritative status; a `404` or other client error propagates at once. `PaymentTimeoutException` is not a failure: never release goods on it, and never treat it as a rejection.
@@ -750,7 +750,7 @@ The PSR interface packages are not runtime dependencies of this library; they ar
 
 ## Security
 - Credentials and tokens never appear in exception messages or logs produced by the SDK.
-- TLS certificate and hostname verification are always on, TLS 1.2 is the minimum, and redirects are not followed, so the bearer token cannot leak to another host.
+- In the bundled cURL transport, TLS certificate and hostname verification are always on, TLS 1.2 is the minimum, and redirects are never followed, so the bearer token cannot leak to another host. If you supply a PSR-18 client instead, configure it the same way; most clients follow redirects by default.
 - All IDs are validated as UUIDs and URL-encoded before use in a path; query parameters are RFC 3986 encoded.
 - Header values from `RequestOptions` and idempotency keys are validated so untrusted input cannot inject headers.
 - Webhook signatures are compared in constant time, with an empty secret always failing and stale or future-dated timestamps rejected.
