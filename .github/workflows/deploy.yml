@@ -11,7 +11,7 @@ jobs:
     # Releases must be cut from master; manual dispatches are also restricted to master to prevent credential exposure.
     if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event_name == 'release' && github.event.release.target_commitish == 'master')
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Setup PHP
