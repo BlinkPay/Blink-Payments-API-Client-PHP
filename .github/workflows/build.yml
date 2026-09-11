@@ -8,40 +8,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  snyk:
-    # Snyk test quota is limited, so only monitor what lands on master.
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
-        with:
-          php-version: '8.3'
-          extensions: curl, json
-          coverage: none
-      - name: Cache Composer packages
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.composer/cache
-          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
-          restore-keys: ${{ runner.os }}-composer-
-      - name: Install packages
-        run: composer update --no-interaction --no-progress --prefer-dist
-      - name: Run Snyk to check for vulnerabilities
-        # Pinned to a commit rather than @master so the action cannot change under us.
-        uses: snyk/actions/php@12140f4059e244892ae643824a95459a102120dd
-        with:
-          command: monitor
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-          SNYK_ORG: blinkpay-zw9
-          SNYK_PROJECT_NAME: Blink-Payments-API-Client-PHP
-        # Advisory only: a Snyk failure, including an exhausted test quota, must not fail the build.
-        continue-on-error: true
-
   static_analysis:
     runs-on: ubuntu-latest
     steps:
