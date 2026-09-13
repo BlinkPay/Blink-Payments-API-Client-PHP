@@ -39,6 +39,8 @@ class CurlTransport implements HttpTransportInterface
             CURLOPT_CONNECTTIMEOUT => min(self::CONNECT_TIMEOUT_SECONDS, $timeoutSeconds),
             CURLOPT_SSL_VERIFYPEER => true,
             CURLOPT_SSL_VERIFYHOST => 2,
+            // Never follow redirects: a 3xx to another host must not receive the bearer token.
+            CURLOPT_FOLLOWLOCATION => false,
             // Refuse TLS 1.0/1.1 even where an old system libcurl would still offer them.
             CURLOPT_SSLVERSION => CURL_SSLVERSION_TLSv1_2,
         ]);

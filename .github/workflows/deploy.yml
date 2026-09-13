@@ -8,12 +8,14 @@ on:
 jobs:
   packagist_update:
     runs-on: ubuntu-latest
-    # Releases must be cut from master; a manual dispatch runs from whichever ref it was started on.
-    if: github.event_name == 'workflow_dispatch' || github.event.release.target_commitish == 'master'
+    # Releases must be cut from master; manual dispatches are also restricted to master to prevent credential exposure.
+    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event_name == 'release' && github.event.release.target_commitish == 'master')
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.3'
           extensions: curl, json
