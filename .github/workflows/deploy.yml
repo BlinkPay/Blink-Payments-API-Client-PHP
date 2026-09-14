@@ -3,17 +3,20 @@ name: Deploy
 on:
   release:
     types: [ published ]
-  workflow_dispatch:
+
+permissions: {}
 
 jobs:
-  packagist_update:
+  verify:
     runs-on: ubuntu-latest
-    # Releases must be cut from master; manual dispatches are also restricted to master to prevent credential exposure.
-    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event_name == 'release' && github.event.release.target_commitish == 'master')
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history, so origin/master is present for the ancestry check below.
+          fetch-depth: 0
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
@@ -22,11 +25,17 @@ jobs:
           coverage: none
       - name: Validate composer.json
         run: composer validate --strict
-      - name: Verify the release tag is a version and matches BlinkDebitClient::VERSION
-        if: github.event_name == 'release'
+      - name: Verify the release is publishable
         env:
           TAG: ${{ github.event.release.tag_name }}
         run: |
+          # GitHub ignores the release's target_commitish once the tag exists and
+          # reports the default branch instead, so it is no evidence of anything.
+          # Ask git where the tagged commit actually sits.
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "Tag $TAG points at $GITHUB_SHA, which is not on master; releases must be cut from master."
+            exit 1
+          fi
           case "$TAG" in
             [0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "Release tag must be semantic, e.g. 1.2.3"; exit 1 ;;
@@ -38,13 +47,31 @@ jobs:
             exit 1
           fi
           echo "Releasing $TAG"
+
+  notify_packagist:
+    needs: verify
+    runs-on: ubuntu-latest
+    # SETUP REQUIRED: the 'packagist' environment does not exist yet, and GitHub
+    # creates a missing one on first use with no protection rules. Until someone
+    # creates it with a release-tag deployment policy and required reviewers, and
+    # moves PACKAGIST_USERNAME/PACKAGIST_TOKEN into it from the repository
+    # secrets, this line enforces nothing.
+    # The guard has to live there rather than here: a release runs the workflow
+    # definition found on the ref being deployed, so any check written in this
+    # file is editable by whoever controls that ref.
+    environment: packagist
+    permissions: {}
+    steps:
+      # No checkout and no third-party actions: Packagist only needs the
+      # repository URL, so nothing external runs beside the token.
       - name: Notify Packagist
         # Packagist reads versions from git tags, so publishing is a metadata refresh rather than an upload.
         env:
           PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
           PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+          REPOSITORY_URL: https://github.com/${{ github.repository }}
         run: |
           curl --fail --silent --show-error -X POST \
             -H 'Content-Type: application/json' \
             "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_TOKEN}" \
-            -d '{"repository":{"url":"https://github.com/${{ github.repository }}"}}'
+            -d "{\"repository\":{\"url\":\"${REPOSITORY_URL}\"}}"

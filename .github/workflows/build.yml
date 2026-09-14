@@ -7,6 +7,10 @@ on:
     branches: [ master ]
   workflow_dispatch:
 
+# Every job only reads the checkout; nothing here writes back to the repository.
+permissions:
+  contents: read
+
 jobs:
   static_analysis:
     runs-on: ubuntu-latest
@@ -26,10 +30,11 @@ jobs:
           path: ~/.composer/cache
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-
+      - name: Validate composer.json and the committed lock
+        # Runs before the update below so --strict sees the lock as committed.
+        run: composer validate --strict
       - name: Install packages
         run: composer update --no-interaction --no-progress --prefer-dist
-      - name: Validate composer.json
-        run: composer validate --strict
       - name: Run PHPStan
         run: composer analyse
 
@@ -39,9 +44,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 7.4 is the declared floor; 8.x covers every supported release line, so a
-        # deprecation in a new PHP release surfaces here rather than in production.
-        php-version: [ '7.4', '8.1', '8.2', '8.3', '8.4', '8.5' ]
+        # Every version composer.json declares (^7.4 || ^8.0), so the support
+        # claim stays tested, and a deprecation in a new PHP release surfaces
+        # here rather than in production.
+        php-version: [ '7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5' ]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -61,7 +67,10 @@ jobs:
           key: ${{ runner.os }}-composer-${{ matrix.php-version }}-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-${{ matrix.php-version }}-
       - name: Install packages
-        # composer.lock is not committed for a library; resolve the highest set the runtime allows.
+        # The root composer.lock is committed so scanners see the dependency set,
+        # but phpunit 11 pins it to PHP 8.2+, so the 7.4 and 8.1 rows cannot
+        # install from it. The matrix updates instead, which also tests every
+        # version against the highest set its own runtime allows.
         run: composer update --no-interaction --no-progress --prefer-dist
       - name: Lint
         run: find src test config -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null

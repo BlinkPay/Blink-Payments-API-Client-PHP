@@ -47,20 +47,22 @@ This project is licensed under the MIT License.
 ## Building and Testing Locally
 
 ### Prerequisites
-- PHP 7.4 or later with the `curl` and `json` extensions (check with `php -v` and `php -m`)
+- PHP 7.4 or later with the `curl` and `json` extensions (check with `php -v` and `php -m`) — the same floor the library itself supports
 - [Composer 2](https://getcomposer.org/)
+
+On PHP 8.2 or later you can install straight from the committed `composer.lock`. Below that, the lock does not apply, because PHPUnit 11 requires PHP 8.2: run `composer update` instead and Composer resolves the test tooling your runtime can take, which is what the 7.4 CI row does. That is a limit of the development tooling alone and says nothing about which PHP versions the library runs on — 7.4 and 8.0 up, every one of them exercised by CI.
 
 ### Install and test
 From the repository root:
 ```bash
-composer install
+composer install     # PHP 8.2+; on 7.4-8.1 run `composer update` instead
 composer test        # PHPUnit
 composer analyse     # PHPStan, level 8
 ```
 
 The suite needs no network or sandbox credentials: HTTP is replaced by an in-memory transport (one test drives the real cURL transport at a closed loopback port to cover the failure path) and sleeps are stubbed, so the retry and polling tests run instantly. The PSR adapters are covered with in-memory PSR-6/PSR-16 doubles and `nyholm/psr7`. The APCu cache tests run wherever the extension is enabled for the CLI (`apc.enable_cli=1`) and are skipped elsewhere.
 
-The Laravel, Symfony and CakePHP glue is tested against the real frameworks from `test-frameworks/`, a separate Composer project (PHP 8.2+) that boots each container, resolves the client and checks that the sandbox flag and token cache are wired as documented. It also runs PHPStan over the glue with the frameworks installed, which the main analysis cannot do:
+The Laravel, Symfony and CakePHP glue is tested against the real frameworks from `test-frameworks/`, a separate Composer project (PHP 8.2+, though its committed lock resolves Symfony 8.1 and so needs 8.4+ to install from directly, which is why the steps below update rather than install) that boots each container, resolves the client and checks that the sandbox flag and token cache are wired as documented. It also runs PHPStan over the glue with the frameworks installed, which the main analysis cannot do:
 ```bash
 cd test-frameworks
 composer update
