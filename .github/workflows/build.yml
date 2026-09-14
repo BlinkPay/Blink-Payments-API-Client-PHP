@@ -7,6 +7,10 @@ on:
     branches: [ master ]
   workflow_dispatch:
 
+# Every job only reads the checkout; nothing here writes back to the repository.
+permissions:
+  contents: read
+
 jobs:
   static_analysis:
     runs-on: ubuntu-latest
@@ -61,7 +65,9 @@ jobs:
           key: ${{ runner.os }}-composer-${{ matrix.php-version }}-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-${{ matrix.php-version }}-
       - name: Install packages
-        # composer.lock is not committed for a library; resolve the highest set the runtime allows.
+        # composer.lock is committed so scanners see the dependency set, but it is
+        # resolved for PHP 8.2+; the matrix updates instead so every version is
+        # tested against the highest set its runtime allows.
         run: composer update --no-interaction --no-progress --prefer-dist
       - name: Lint
         run: find src test config -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null

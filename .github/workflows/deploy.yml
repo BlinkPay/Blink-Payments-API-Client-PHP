@@ -3,13 +3,14 @@ name: Deploy
 on:
   release:
     types: [ published ]
-  workflow_dispatch:
+
+permissions: {}
 
 jobs:
-  packagist_update:
+  verify:
     runs-on: ubuntu-latest
-    # Releases must be cut from master; manual dispatches are also restricted to master to prevent credential exposure.
-    if: (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') || (github.event_name == 'release' && github.event.release.target_commitish == 'master')
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -22,11 +23,15 @@ jobs:
           coverage: none
       - name: Validate composer.json
         run: composer validate --strict
-      - name: Verify the release tag is a version and matches BlinkDebitClient::VERSION
-        if: github.event_name == 'release'
+      - name: Verify the release is publishable
         env:
           TAG: ${{ github.event.release.tag_name }}
+          TARGET: ${{ github.event.release.target_commitish }}
         run: |
+          if [ "$TARGET" != "master" ]; then
+            echo "Releases must be cut from master; this one targets $TARGET."
+            exit 1
+          fi
           case "$TAG" in
             [0-9]*.[0-9]*.[0-9]*|v[0-9]*.[0-9]*.[0-9]*) ;;
             *) echo "Release tag must be semantic, e.g. 1.2.3"; exit 1 ;;
@@ -38,13 +43,28 @@ jobs:
             exit 1
           fi
           echo "Releasing $TAG"
+
+  notify_packagist:
+    needs: verify
+    runs-on: ubuntu-latest
+    # The Packagist credentials belong to this environment rather than the
+    # repository, so GitHub enforces the tag policy and reviewer approval before
+    # they can be read. That guard cannot live in this file: a release runs the
+    # workflow definition found on the ref being deployed, so any check written
+    # here is editable by whoever controls that ref.
+    environment: packagist
+    permissions: {}
+    steps:
+      # No checkout and no third-party actions: Packagist only needs the
+      # repository URL, so nothing external runs beside the token.
       - name: Notify Packagist
         # Packagist reads versions from git tags, so publishing is a metadata refresh rather than an upload.
         env:
           PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
           PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
+          REPOSITORY_URL: https://github.com/${{ github.repository }}
         run: |
           curl --fail --silent --show-error -X POST \
             -H 'Content-Type: application/json' \
             "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_TOKEN}" \
-            -d '{"repository":{"url":"https://github.com/${{ github.repository }}"}}'
+            -d "{\"repository\":{\"url\":\"${REPOSITORY_URL}\"}}"
