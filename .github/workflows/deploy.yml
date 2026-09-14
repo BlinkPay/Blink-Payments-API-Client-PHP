@@ -9,6 +9,12 @@ permissions: {}
 jobs:
   verify:
     runs-on: ubuntu-latest
+    # Reject manual dispatch and any non-release trigger. The workflow must run
+    # only for published releases, where the tag and ancestry validation below
+    # can enforce release policy. A workflow_dispatch trigger would allow a
+    # contributor to select an arbitrary ref, skip this validation (because
+    # github.event.release is absent), and reach the Packagist credentials.
+    if: github.event_name == 'release'
     permissions:
       contents: read
     steps:
@@ -51,6 +57,10 @@ jobs:
   notify_packagist:
     needs: verify
     runs-on: ubuntu-latest
+    # Defense in depth: reject non-release events even if the verify job is
+    # modified or bypassed. This prevents credential exposure if workflow_dispatch
+    # is added to the trigger list.
+    if: github.event_name == 'release'
     # SETUP REQUIRED: the 'packagist' environment does not exist yet, and GitHub
     # creates a missing one on first use with no protection rules. Until someone
     # creates it with a release-tag deployment policy and required reviewers, and
