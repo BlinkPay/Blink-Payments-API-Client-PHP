@@ -30,10 +30,11 @@ jobs:
           path: ~/.composer/cache
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-
+      - name: Validate composer.json and the committed lock
+        # Runs before the update below so --strict sees the lock as committed.
+        run: composer validate --strict
       - name: Install packages
         run: composer update --no-interaction --no-progress --prefer-dist
-      - name: Validate composer.json
-        run: composer validate --strict
       - name: Run PHPStan
         run: composer analyse
 
@@ -65,9 +66,10 @@ jobs:
           key: ${{ runner.os }}-composer-${{ matrix.php-version }}-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-${{ matrix.php-version }}-
       - name: Install packages
-        # composer.lock is committed so scanners see the dependency set, but it is
-        # resolved for PHP 8.2+; the matrix updates instead so every version is
-        # tested against the highest set its runtime allows.
+        # The root composer.lock is committed so scanners see the dependency set,
+        # but phpunit 11 pins it to PHP 8.2+, so it cannot be installed on the
+        # 7.4 row. The matrix updates instead, which also tests every version
+        # against the highest set its own runtime allows.
         run: composer update --no-interaction --no-progress --prefer-dist
       - name: Lint
         run: find src test config -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null

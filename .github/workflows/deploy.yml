@@ -15,6 +15,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Full history, so origin/master is present for the ancestry check below.
+          fetch-depth: 0
       - name: Setup PHP
         uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
@@ -26,10 +28,12 @@ jobs:
       - name: Verify the release is publishable
         env:
           TAG: ${{ github.event.release.tag_name }}
-          TARGET: ${{ github.event.release.target_commitish }}
         run: |
-          if [ "$TARGET" != "master" ]; then
-            echo "Releases must be cut from master; this one targets $TARGET."
+          # GitHub ignores the release's target_commitish once the tag exists and
+          # reports the default branch instead, so it is no evidence of anything.
+          # Ask git where the tagged commit actually sits.
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "Tag $TAG points at $GITHUB_SHA, which is not on master; releases must be cut from master."
             exit 1
           fi
           case "$TAG" in
@@ -47,11 +51,14 @@ jobs:
   notify_packagist:
     needs: verify
     runs-on: ubuntu-latest
-    # The Packagist credentials belong to this environment rather than the
-    # repository, so GitHub enforces the tag policy and reviewer approval before
-    # they can be read. That guard cannot live in this file: a release runs the
-    # workflow definition found on the ref being deployed, so any check written
-    # here is editable by whoever controls that ref.
+    # SETUP REQUIRED: the 'packagist' environment does not exist yet, and GitHub
+    # creates a missing one on first use with no protection rules. Until someone
+    # creates it with a release-tag deployment policy and required reviewers, and
+    # moves PACKAGIST_USERNAME/PACKAGIST_TOKEN into it from the repository
+    # secrets, this line enforces nothing.
+    # The guard has to live there rather than here: a release runs the workflow
+    # definition found on the ref being deployed, so any check written in this
+    # file is editable by whoever controls that ref.
     environment: packagist
     permissions: {}
     steps:

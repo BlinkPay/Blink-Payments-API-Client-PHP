@@ -1,0 +1,12 @@
+# Trim the zipball Composer downloads for consumers. src/ and config/ ship:
+# config/blinkpay.php is loaded at runtime by the Laravel service provider.
+# Composer ignores a dependency's lock, so shipping ours only adds weight.
+/.github                  export-ignore
+/.gitattributes           export-ignore
+/.gitignore               export-ignore
+/composer.lock            export-ignore
+/phpstan.neon.dist        export-ignore
+/phpunit.xml.dist         export-ignore
+/sonar-project.properties export-ignore
+/test                     export-ignore
+/test-frameworks          export-ignore

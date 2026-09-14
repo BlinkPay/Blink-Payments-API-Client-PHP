@@ -47,13 +47,15 @@ This project is licensed under the MIT License.
 ## Building and Testing Locally
 
 ### Prerequisites
-- PHP 7.4 or later with the `curl` and `json` extensions (check with `php -v` and `php -m`)
+- PHP 7.4 or later with the `curl` and `json` extensions (check with `php -v` and `php -m`) — the same floor the library itself supports
 - [Composer 2](https://getcomposer.org/)
+
+On PHP 8.2 or later you can install straight from the committed `composer.lock`. Below that, the lock does not apply, because PHPUnit 11 requires PHP 8.2: run `composer update` instead and Composer resolves the test tooling your runtime can take, which is what the 7.4 CI row does. That is a limit of the development tooling alone and says nothing about which PHP versions the library runs on — every version from 7.4 up, each covered by CI.
 
 ### Install and test
 From the repository root:
 ```bash
-composer install
+composer install     # PHP 8.2+; on 7.4-8.1 run `composer update` instead
 composer test        # PHPUnit
 composer analyse     # PHPStan, level 8
 ```
