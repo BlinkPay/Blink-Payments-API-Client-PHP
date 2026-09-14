@@ -44,9 +44,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 7.4 is the declared floor; 8.x covers every supported release line, so a
-        # deprecation in a new PHP release surfaces here rather than in production.
-        php-version: [ '7.4', '8.1', '8.2', '8.3', '8.4', '8.5' ]
+        # Every version composer.json declares (^7.4 || ^8.0), so the support
+        # claim stays tested, and a deprecation in a new PHP release surfaces
+        # here rather than in production.
+        php-version: [ '7.4', '8.0', '8.1', '8.2', '8.3', '8.4', '8.5' ]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -67,9 +68,9 @@ jobs:
           restore-keys: ${{ runner.os }}-composer-${{ matrix.php-version }}-
       - name: Install packages
         # The root composer.lock is committed so scanners see the dependency set,
-        # but phpunit 11 pins it to PHP 8.2+, so it cannot be installed on the
-        # 7.4 row. The matrix updates instead, which also tests every version
-        # against the highest set its own runtime allows.
+        # but phpunit 11 pins it to PHP 8.2+, so the 7.4 and 8.1 rows cannot
+        # install from it. The matrix updates instead, which also tests every
+        # version against the highest set its own runtime allows.
         run: composer update --no-interaction --no-progress --prefer-dist
       - name: Lint
         run: find src test config -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
