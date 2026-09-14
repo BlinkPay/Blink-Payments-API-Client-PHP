@@ -18,6 +18,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      # CRITICAL SECURITY CONTROL: Verify this workflow is running from a release
+      # tag, not from a branch. This check uses github.ref which reflects the
+      # actual ref being executed and cannot be bypassed by modifying the workflow
+      # file on a branch. A contributor who adds workflow_dispatch and removes the
+      # if conditions above will still fail this check when dispatching from a
+      # branch ref (refs/heads/*) rather than a tag ref (refs/tags/*).
+      - name: Enforce execution from release tag only
+        run: |
+          if [[ "${{ github.ref }}" != refs/tags/* ]]; then
+            echo "SECURITY: This workflow must run from a tag (refs/tags/*), not from ${{ github.ref }}"
+            echo "This prevents contributors from dispatching modified workflow code with deployment credentials."
+            exit 1
+          fi
+          echo "Verified: Running from tag ${{ github.ref }}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -72,6 +86,17 @@ jobs:
     environment: packagist
     permissions: {}
     steps:
+      # CRITICAL SECURITY CONTROL: Defense-in-depth check that this workflow is
+      # running from a release tag. Even if the verify job is modified or bypassed,
+      # this check prevents credential exposure when dispatching from a branch.
+      - name: Enforce execution from release tag only
+        run: |
+          if [[ "${{ github.ref }}" != refs/tags/* ]]; then
+            echo "SECURITY: This workflow must run from a tag (refs/tags/*), not from ${{ github.ref }}"
+            echo "This prevents contributors from dispatching modified workflow code with deployment credentials."
+            exit 1
+          fi
+          echo "Verified: Running from tag ${{ github.ref }}"
       # No checkout and no third-party actions: Packagist only needs the
       # repository URL, so nothing external runs beside the token.
       - name: Notify Packagist
