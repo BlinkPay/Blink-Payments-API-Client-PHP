@@ -18,20 +18,6 @@ jobs:
     permissions:
       contents: read
     steps:
-      # CRITICAL SECURITY CONTROL: Verify this workflow is running from a release
-      # tag, not from a branch. This check uses github.ref which reflects the
-      # actual ref being executed and cannot be bypassed by modifying the workflow
-      # file on a branch. A contributor who adds workflow_dispatch and removes the
-      # if conditions above will still fail this check when dispatching from a
-      # branch ref (refs/heads/*) rather than a tag ref (refs/tags/*).
-      - name: Enforce execution from release tag only
-        run: |
-          if [[ "${{ github.ref }}" != refs/tags/* ]]; then
-            echo "SECURITY: This workflow must run from a tag (refs/tags/*), not from ${{ github.ref }}"
-            echo "This prevents contributors from dispatching modified workflow code with deployment credentials."
-            exit 1
-          fi
-          echo "Verified: Running from tag ${{ github.ref }}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -71,7 +57,7 @@ jobs:
   notify_packagist:
     needs: verify
     runs-on: ubuntu-latest
-    # Defense in depth: reject non-release events even if the verify job is
+    # Defence in depth: reject non-release events even if the verify job is
     # modified or bypassed. This prevents credential exposure if workflow_dispatch
     # is added to the trigger list.
     if: github.event_name == 'release'
@@ -86,17 +72,21 @@ jobs:
     environment: packagist
     permissions: {}
     steps:
-      # CRITICAL SECURITY CONTROL: Defense-in-depth check that this workflow is
-      # running from a release tag. Even if the verify job is modified or bypassed,
-      # this check prevents credential exposure when dispatching from a branch.
+      # Redundant while a published release is the only trigger, since such a run
+      # is always on a tag ref. It is kept so that adding another trigger later
+      # cannot reach the Packagist credentials from a branch ref. It is not a
+      # defence against a modified workflow: a tag carrying an edited copy of this
+      # file passes it. The enforcing control is the protected environment above.
+      # GITHUB_REF is read from the environment rather than interpolated, because
+      # an expression is substituted into the script before bash parses it and the
+      # tag name is chosen by whoever publishes the release.
       - name: Enforce execution from release tag only
         run: |
-          if [[ "${{ github.ref }}" != refs/tags/* ]]; then
-            echo "SECURITY: This workflow must run from a tag (refs/tags/*), not from ${{ github.ref }}"
-            echo "This prevents contributors from dispatching modified workflow code with deployment credentials."
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "SECURITY: this workflow must run from a tag (refs/tags/*), not from $GITHUB_REF"
             exit 1
           fi
-          echo "Verified: Running from tag ${{ github.ref }}"
+          echo "Verified: running from tag $GITHUB_REF"
       # No checkout and no third-party actions: Packagist only needs the
       # repository URL, so nothing external runs beside the token.
       - name: Notify Packagist

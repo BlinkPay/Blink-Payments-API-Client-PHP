@@ -46,24 +46,24 @@ class CurlTransport implements HttpTransportInterface
         $statusCode = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
         $headerSize = (int) curl_getinfo($handle, CURLINFO_HEADER_SIZE);
 
-        if ($response === false) {
+        if (!is_string($response)) {
             throw new TransportException(sprintf('The Blink Debit API could not be reached: %s', $curlError));
         }
 
-        $response = (string) $response;
-
         return [
             'status' => $statusCode,
-            'body' => (string) substr($response, $headerSize),
-            'headers' => self::parseHeaders((string) substr($response, 0, $headerSize)),
+            'body' => substr($response, $headerSize),
+            'headers' => self::parseHeaders(substr($response, 0, $headerSize)),
         ];
     }
 
     /**
      * Splits a raw header block into a map keyed by lower-case header name.
      *
-     * Status lines carry no colon and are skipped. Where curl emitted more than
-     * one block - a 100 Continue or a proxy CONNECT ahead of the real response -
+     * Lines are split on LF and trimmed, because libcurl accepts the bare-LF
+     * terminators some origins and proxies still emit as well as CRLF. Status
+     * lines carry no colon and are skipped. Where curl emitted more than one
+     * block — a 100 Continue or a proxy CONNECT ahead of the real response —
      * the last value for a name wins.
      *
      * @param string $rawHeaders Every header byte curl received, status lines included.
@@ -73,7 +73,7 @@ class CurlTransport implements HttpTransportInterface
     private static function parseHeaders(string $rawHeaders): array
     {
         $headers = [];
-        foreach (explode("\r\n", $rawHeaders) as $line) {
+        foreach (explode("\n", $rawHeaders) as $line) {
             $pair = explode(':', $line, 2);
             if (count($pair) === 2) {
                 $headers[strtolower(trim($pair[0]))] = trim($pair[1]);
