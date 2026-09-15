@@ -57,21 +57,33 @@ jobs:
   notify_packagist:
     needs: verify
     runs-on: ubuntu-latest
-    # Defense in depth: reject non-release events even if the verify job is
+    # Defence in depth: reject non-release events even if the verify job is
     # modified or bypassed. This prevents credential exposure if workflow_dispatch
     # is added to the trigger list.
     if: github.event_name == 'release'
-    # SETUP REQUIRED: the 'packagist' environment does not exist yet, and GitHub
-    # creates a missing one on first use with no protection rules. Until someone
-    # creates it with a release-tag deployment policy and required reviewers, and
-    # moves PACKAGIST_USERNAME/PACKAGIST_TOKEN into it from the repository
-    # secrets, this line enforces nothing.
+    # PACKAGIST_USERNAME/PACKAGIST_TOKEN are environment secrets here, reachable
+    # only from a release tag and only after a reviewer approves the deployment.
     # The guard has to live there rather than here: a release runs the workflow
     # definition found on the ref being deployed, so any check written in this
     # file is editable by whoever controls that ref.
     environment: packagist
     permissions: {}
     steps:
+      # Redundant while a published release is the only trigger, since such a run
+      # is always on a tag ref. It is kept so that adding another trigger later
+      # cannot reach the Packagist credentials from a branch ref. It is not a
+      # defence against a modified workflow: a tag carrying an edited copy of this
+      # file passes it. The enforcing control is the protected environment above.
+      # GITHUB_REF is read from the environment rather than interpolated, because
+      # an expression is substituted into the script before bash parses it and the
+      # tag name is chosen by whoever publishes the release.
+      - name: Enforce execution from release tag only
+        run: |
+          if [[ "$GITHUB_REF" != refs/tags/* ]]; then
+            echo "SECURITY: this workflow must run from a tag (refs/tags/*), not from $GITHUB_REF"
+            exit 1
+          fi
+          echo "Verified: running from tag $GITHUB_REF"
       # No checkout and no third-party actions: Packagist only needs the
       # repository URL, so nothing external runs beside the token.
       - name: Notify Packagist

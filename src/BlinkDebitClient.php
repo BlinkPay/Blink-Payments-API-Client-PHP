@@ -80,6 +80,12 @@ class BlinkDebitClient
     // checkout never crosses the expiry boundary with a stale token.
     private const TOKEN_EXPIRY_BUFFER_SECONDS = 300;
     private const MINIMUM_TOKEN_TTL_SECONDS = 60;
+    // A token response is external input, so the grant is clamped: an
+    // out-of-range expires_in must not cache a token effectively forever, and a
+    // value above PHP_INT_MAX — which JSON decodes to a float — must never reach
+    // an integer cast, which yields a meaningless lifetime and, from PHP 8.5,
+    // a warning that framework error handlers raise as an exception mid-payment.
+    private const MAXIMUM_TOKEN_TTL_SECONDS = 86400;
 
     private const DEFAULT_TIMEOUT_SECONDS = 30;
 
@@ -282,7 +288,9 @@ class BlinkDebitClient
             throw $this->tokenException($response['status'], $body);
         }
 
-        $expiresIn = isset($body['expires_in']) ? (int) $body['expires_in'] : 3600;
+        $expiresIn = isset($body['expires_in']) && is_numeric($body['expires_in'])
+            ? (int) min((float) $body['expires_in'], self::MAXIMUM_TOKEN_TTL_SECONDS)
+            : 3600;
         $this->tokenCache->set(
             $this->tokenCacheKey(),
             (string) $body['access_token'],

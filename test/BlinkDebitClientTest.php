@@ -16,6 +16,7 @@ use BlinkPay\BlinkDebit\Exception\UnauthorisedException;
 use BlinkPay\BlinkDebit\InMemoryTokenCache;
 use BlinkPay\BlinkDebit\Pcr;
 use BlinkPay\BlinkDebit\RequestOptions;
+use BlinkPay\BlinkDebit\TokenCacheInterface;
 use PHPUnit\Framework\TestCase;
 
 class BlinkDebitClientTest extends TestCase
@@ -31,9 +32,10 @@ class BlinkDebitClientTest extends TestCase
         $this->sleeps = [];
     }
 
-    private function client(bool $sandbox = true): BlinkDebitClient
+    private function client(bool $sandbox = true, ?TokenCacheInterface $cache = null): BlinkDebitClient
     {
-        $client = new BlinkDebitClient('client-id', 'client-secret', $sandbox, new InMemoryTokenCache(), $this->transport);
+        $cache = $cache ?? new InMemoryTokenCache();
+        $client = new BlinkDebitClient('client-id', 'client-secret', $sandbox, $cache, $this->transport);
         $client->setSleep(function (int $milliseconds): void {
             $this->sleeps[] = $milliseconds;
         });
@@ -93,6 +95,65 @@ class BlinkDebitClientTest extends TestCase
             }
         );
         $this->assertCount(1, $tokenRequests);
+    }
+
+    public function testTokenLifetimeFollowsExpiresInLessTheRefreshBuffer(): void
+    {
+        $cache = new RecordingTokenCache();
+        $this->transport->queue(200, ['access_token' => 'tok', 'expires_in' => 3600, 'scope' => 'view:metadata']);
+
+        $this->client(true, $cache)->getAccessToken();
+
+        // Five minutes short of the hour the server granted, so an in-flight
+        // checkout cannot carry a token the server has already retired.
+        $this->assertSame(3300, $cache->lastWriteFor('blinkpay_token_')['ttlSeconds']);
+        // Scopes are deliberately kept beyond the token they arrived with.
+        $this->assertNull($cache->lastWriteFor('blinkpay_scopes_')['ttlSeconds']);
+    }
+
+    public function testShortTokenLifetimeFallsBackToTheMinimum(): void
+    {
+        $cache = new RecordingTokenCache();
+        // Subtracting the buffer from a one-minute token would ask for a
+        // negative lifetime, which a store would treat as already expired.
+        $this->transport->queue(200, ['access_token' => 'tok', 'expires_in' => 60]);
+
+        $this->client(true, $cache)->getAccessToken();
+
+        $this->assertSame(60, $cache->lastWriteFor('blinkpay_token_')['ttlSeconds']);
+    }
+
+    public function testAnOutOfRangeExpiresInIsClampedToADay(): void
+    {
+        $cache = new RecordingTokenCache();
+        // Any JSON integer above PHP_INT_MAX decodes to a float, which PHP 8.5
+        // refuses to cast to int quietly; clamping keeps it away from the cast.
+        $this->transport->queue(200, ['access_token' => 'tok', 'expires_in' => 1.0e30]);
+
+        $this->client(true, $cache)->getAccessToken();
+
+        $this->assertSame(86100, $cache->lastWriteFor('blinkpay_token_')['ttlSeconds']);
+    }
+
+    public function testANonNumericExpiresInIsTreatedAsAbsent(): void
+    {
+        $cache = new RecordingTokenCache();
+        $this->transport->queue(200, ['access_token' => 'tok', 'expires_in' => 'not-a-number']);
+
+        $this->client(true, $cache)->getAccessToken();
+
+        $this->assertSame(3300, $cache->lastWriteFor('blinkpay_token_')['ttlSeconds']);
+    }
+
+    public function testMissingExpiresInAssumesTheStandardHour(): void
+    {
+        $cache = new RecordingTokenCache();
+        $this->transport->queue(200, ['access_token' => 'tok', 'scope' => 'view:metadata']);
+
+        $this->client(true, $cache)->getAccessToken();
+
+        // The assumption is safe because a 401 forces a refresh and retry.
+        $this->assertSame(3300, $cache->lastWriteFor('blinkpay_token_')['ttlSeconds']);
     }
 
     public function testUnauthorisedResponseForcesOneTokenRefreshAndRetry(): void
