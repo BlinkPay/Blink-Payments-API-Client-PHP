@@ -994,8 +994,9 @@ class BlinkDebitClient
      *
      * @param array<string, string> $pcr            Statement particulars/code/reference; see Pcr::build().
      * @param string|null           $idempotencyKey Optional; the API replays a retried request with the same
-     *                                              key instead of refunding twice, so supply one and persist
-     *                                              it against the refund attempt.
+     *                                              key and payload, returning the original refund_id instead
+     *                                              of refunding twice, so supply one and persist it against
+     *                                              the refund attempt.
      *
      * @return array<string, mixed> Includes `refund_id`.
      *
@@ -1077,9 +1078,11 @@ class BlinkDebitClient
      * this exists for payload shapes the helpers do not cover.
      *
      * The API allows several money-moving refunds against one payment, so a
-     * retried request without an idempotency key can refund twice. With a
-     * key, the API replays the original response instead; without one, the
-     * request is also not retried by this client on a 5xx or transport
+     * retried request without an idempotency key can refund twice. With a key
+     * and the same payload, the API replays the original response and its
+     * original refund_id instead; a request arriving while another holding
+     * that key is still in flight is rejected with 409 BP711. Without a key
+     * the request is also not retried by this client on a 5xx or transport
      * failure, since the outcome would be unknown.
      *
      * @param array<string, mixed> $payload

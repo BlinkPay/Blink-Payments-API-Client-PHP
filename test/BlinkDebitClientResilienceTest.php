@@ -246,6 +246,50 @@ class BlinkDebitClientResilienceTest extends TestCase
         }
     }
 
+    public function testKeyedRefundIsRetriedOnServerErrorAndTransportFailureWithTheSameKey(): void
+    {
+        $this->queueToken();
+        $this->transport->queue(502, ['message' => 'bad gateway']);
+        $this->transport->queueFailure();
+        $this->transport->queue(201, ['refund_id' => self::UUID, 'status' => 'processing']);
+
+        $refund = $this->client()->createFullRefund(self::UUID, Pcr::build('Shop'), self::IDEM);
+
+        // The API replays the original refund, so the caller reconciles against
+        // the refund_id it would have had without the retries.
+        $this->assertSame(self::UUID, $refund['refund_id']);
+        $this->assertSame([1000, 5000], $this->sleeps);
+        $this->assertSame(
+            ['/oauth2/token', '/payments/v1/refunds', '/payments/v1/refunds', '/payments/v1/refunds'],
+            $this->transport->paths(),
+            'One refund POST per attempt; nothing else was resent.'
+        );
+
+        $attempts = array_slice($this->transport->requests, 1);
+        $this->assertStringContainsString(self::UUID, (string) $attempts[0]['body']);
+        foreach ($attempts as $attempt) {
+            $this->assertSame('POST', $attempt['method']);
+            $this->assertSame($attempts[0]['body'], $attempt['body'], 'A replay needs the same payload as the first attempt.');
+            $this->assertSame(['idempotency-key: ' . self::IDEM], $this->headersMatching($attempt, 'idempotency-key'));
+        }
+    }
+
+    public function testKeylessRefundIsNotRetriedOnTransportFailure(): void
+    {
+        $this->queueToken();
+        $this->transport->queueFailure('timed out');
+
+        try {
+            $this->client()->createFullRefund(self::UUID, Pcr::build('Shop'));
+            $this->fail('Expected a TransportException.');
+        } catch (TransportException $exception) {
+            $this->assertSame(0, $exception->getStatusCode());
+            $this->assertCount(2, $this->transport->requests, 'The refund may have been created; do not resend blindly.');
+            $this->assertSame([], $this->sleeps);
+            $this->assertSame([], $this->headersMatching($this->transport->lastRequest(), 'idempotency-key'));
+        }
+    }
+
     public function testTransportFailureOnTheTokenEndpointIsRetried(): void
     {
         $this->transport->queueFailure();
