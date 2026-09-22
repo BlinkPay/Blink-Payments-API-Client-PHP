@@ -266,6 +266,7 @@ class BlinkDebitClientResilienceTest extends TestCase
         );
 
         $attempts = array_slice($this->transport->requests, 1);
+        $this->assertStringContainsString(self::UUID, (string) $attempts[0]['body']);
         foreach ($attempts as $attempt) {
             $this->assertSame('POST', $attempt['method']);
             $this->assertSame($attempts[0]['body'], $attempt['body'], 'A replay needs the same payload as the first attempt.');
