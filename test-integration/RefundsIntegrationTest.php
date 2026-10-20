@@ -22,7 +22,7 @@ class RefundsIntegrationTest extends IntegrationTestCase
         $refundId = self::stringField($created, 'refund_id');
         self::assertUuid($refundId, 'refund_id');
 
-        $this->assertCompletedAccountNumberRefund(self::client()->getRefund($refundId), $refundId, $paymentId);
+        $this->assertCompletedAccountNumberRefund(self::processedRefund($refundId), $refundId, $paymentId);
     }
 
     public function testAccountNumberRefundForAnEnduringConsentPaymentIsCreatedAndRetrieved(): void
@@ -38,7 +38,7 @@ class RefundsIntegrationTest extends IntegrationTestCase
             $refundId = self::stringField($created, 'refund_id');
             self::assertUuid($refundId, 'refund_id');
 
-            $this->assertCompletedAccountNumberRefund(self::client()->getRefund($refundId), $refundId, $paymentId);
+            $this->assertCompletedAccountNumberRefund(self::processedRefund($refundId), $refundId, $paymentId);
         } finally {
             self::client()->revokeEnduringConsent($consentId);
         }
@@ -64,6 +64,25 @@ class RefundsIntegrationTest extends IntegrationTestCase
         self::assertNotFound(static function (): void {
             self::client()->getRefund(Uuid::v4());
         });
+    }
+
+    /**
+     * Reads the refund once a second until it leaves `processing`, for up to
+     * AWAIT_SECONDS: a created refund is not necessarily processed yet, as
+     * the getRefund() docblock says. The sandbox answers at once; the loop
+     * keeps the test honest about the contract.
+     *
+     * @return array<string, mixed>
+     */
+    private static function processedRefund(string $refundId): array
+    {
+        for ($attempt = 1; ; $attempt++) {
+            $refund = self::client()->getRefund($refundId);
+            if (($refund['status'] ?? null) !== RefundStatus::PROCESSING || $attempt >= self::AWAIT_SECONDS) {
+                return $refund;
+            }
+            sleep(1);
+        }
     }
 
     /**

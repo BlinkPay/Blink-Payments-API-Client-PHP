@@ -29,7 +29,19 @@ class TransactionsIntegrationTest extends IntegrationTestCase
             ['size' => 1000]
         );
 
+        $this->assertLessThan(1000, count($transactions), 'The window must fit on one page for the checks below.');
         $this->assertContains($consentId, array_column($transactions, 'consent_id'));
+
+        // Oldest first, as the getTransactions() docblock says: the consent
+        // rows' creation times never go backwards down the page.
+        $consentRows = array_filter($transactions, static function (array $row): bool {
+            return ($row['resource'] ?? null) === 'consent';
+        });
+        $creationTimes = array_map('strtotime', array_column($consentRows, 'consent_creation_timestamp'));
+        $sorted = $creationTimes;
+        sort($sorted);
+        $this->assertSame($sorted, $creationTimes);
+
         foreach ($transactions as $transaction) {
             // One flat row per consent, payment or refund.
             $this->assertIsArray($transaction);
@@ -54,17 +66,26 @@ class TransactionsIntegrationTest extends IntegrationTestCase
 
     public function testTransactionTotalsCountANewlySettledPayment(): void
     {
-        $today = (new \DateTimeImmutable('now', new \DateTimeZone(self::NZ)))->format('Y-m-d');
-        $before = self::client()->getTransactionTotals($today, $today);
+        // A window from yesterday to the current day on each read, so a
+        // settlement that crosses midnight NZ time is still inside it.
+        $timezone = new \DateTimeZone(self::NZ);
+        $yesterday = (new \DateTimeImmutable('yesterday', $timezone))->format('Y-m-d');
+        $before = self::client()->getTransactionTotals(
+            $yesterday,
+            (new \DateTimeImmutable('now', $timezone))->format('Y-m-d')
+        );
         $volumeBefore = (int) ($before['NZD']['total_volume'] ?? 0);
 
         self::settledSingleConsentPaymentId();
 
-        $after = self::client()->getTransactionTotals($today, $today);
+        $after = self::client()->getTransactionTotals(
+            $yesterday,
+            (new \DateTimeImmutable('now', $timezone))->format('Y-m-d')
+        );
         $this->assertArrayHasKey('NZD', $after);
         // At least one more: the other SDKs' runs may have settled payments too.
         $this->assertGreaterThan($volumeBefore, (int) ($after['NZD']['total_volume'] ?? 0));
         $this->assertArrayHasKey('total_value', $after['NZD']);
-        $this->assertArrayHasKey($today, $after['NZD']['payments_by_date'] ?? []);
+        $this->assertNotEmpty($after['NZD']['payments_by_date'] ?? []);
     }
 }
