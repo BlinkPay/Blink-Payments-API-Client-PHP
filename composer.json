@@ -65,7 +65,8 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "BlinkPay\\BlinkDebit\\Test\\": "test/"
+            "BlinkPay\\BlinkDebit\\Test\\": "test/",
+            "BlinkPay\\BlinkDebit\\IntegrationTest\\": "test-integration/"
         }
     },
     "extra": {
@@ -77,6 +78,7 @@
     },
     "scripts": {
         "test": "phpunit",
+        "test:integration": "phpunit --testsuite integration",
         "analyse": "phpstan analyse --no-progress"
     }
 }

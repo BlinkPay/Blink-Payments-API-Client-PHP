@@ -1,8 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<phpunit bootstrap="vendor/autoload.php" colors="true">
+<phpunit bootstrap="vendor/autoload.php" colors="true" defaultTestSuite="unit">
     <testsuites>
         <testsuite name="unit">
             <directory>test</directory>
+        </testsuite>
+        <!-- Drives the real sandbox; needs BLINKPAY_CLIENT_ID and BLINKPAY_CLIENT_SECRET. -->
+        <testsuite name="integration">
+            <directory>test-integration</directory>
         </testsuite>
     </testsuites>
 </phpunit>

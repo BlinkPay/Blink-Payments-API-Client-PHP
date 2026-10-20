@@ -1122,8 +1122,9 @@ class BlinkDebitClient
     // ------------------------------------------------------------------
 
     /**
-     * Lists consent, payment and refund transactions in a window, most recent
-     * first, for reconciliation.
+     * Lists consent, payment and refund transactions in a window, oldest
+     * first, for reconciliation. A fresh row therefore sits on the last page
+     * of a wide window, so narrow the window or page to the end to find it.
      *
      * @param string               $startDateTime ISO 8601 date-time, e.g. "2024-04-18T00:00:00+12:00".
      * @param string               $endDateTime   ISO 8601 date-time.
