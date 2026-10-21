@@ -20,10 +20,14 @@ class TransactionsIntegrationTest extends IntegrationTestCase
     public function testTransactionsAreListedForAWindow(): void
     {
         $now = new \DateTimeImmutable('now', new \DateTimeZone(self::NZ));
-        // Two consents of our own, so the ordering check below has rows to
-        // compare even when this class runs on its own.
+        // Two consents of our own, a second apart because the API reports
+        // whole seconds, so the ordering checks below can tell them apart
+        // even when this class runs on its own.
         $consentIds = [];
         for ($i = 0; $i < 2; $i++) {
+            if ($i > 0) {
+                sleep(1);
+            }
             $created = self::client()->createGatewaySingleConsent('1.25', self::REDIRECT_URI, self::pcr(), Uuid::v4());
             $consentIds[] = self::stringField($created, 'consent_id');
         }
@@ -39,6 +43,11 @@ class TransactionsIntegrationTest extends IntegrationTestCase
         foreach ($consentIds as $consentId) {
             $this->assertContains($consentId, $listedConsentIds);
         }
+        $this->assertLessThan(
+            array_search($consentIds[1], $listedConsentIds, true),
+            array_search($consentIds[0], $listedConsentIds, true),
+            'The consent created first is listed first.'
+        );
 
         // Oldest first, as the getTransactions() docblock says: the consent
         // rows' creation times never go backwards down the page.
