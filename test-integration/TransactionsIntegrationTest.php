@@ -20,8 +20,13 @@ class TransactionsIntegrationTest extends IntegrationTestCase
     public function testTransactionsAreListedForAWindow(): void
     {
         $now = new \DateTimeImmutable('now', new \DateTimeZone(self::NZ));
-        $created = self::client()->createGatewaySingleConsent('1.25', self::REDIRECT_URI, self::pcr(), Uuid::v4());
-        $consentId = self::stringField($created, 'consent_id');
+        // Two consents of our own, so the ordering check below has rows to
+        // compare even when this class runs on its own.
+        $consentIds = [];
+        for ($i = 0; $i < 2; $i++) {
+            $created = self::client()->createGatewaySingleConsent('1.25', self::REDIRECT_URI, self::pcr(), Uuid::v4());
+            $consentIds[] = self::stringField($created, 'consent_id');
+        }
 
         $transactions = self::client()->getTransactions(
             $now->modify('-2 minutes')->format(DATE_ATOM),
@@ -30,7 +35,10 @@ class TransactionsIntegrationTest extends IntegrationTestCase
         );
 
         $this->assertLessThan(1000, count($transactions), 'The window must fit on one page for the checks below.');
-        $this->assertContains($consentId, array_column($transactions, 'consent_id'));
+        $listedConsentIds = array_column($transactions, 'consent_id');
+        foreach ($consentIds as $consentId) {
+            $this->assertContains($consentId, $listedConsentIds);
+        }
 
         // Oldest first, as the getTransactions() docblock says: the consent
         // rows' creation times never go backwards down the page.
@@ -50,7 +58,9 @@ class TransactionsIntegrationTest extends IntegrationTestCase
             $this->assertArrayHasKey('merchant_id', $transaction);
         }
 
-        self::client()->revokeSingleConsent($consentId);
+        foreach ($consentIds as $consentId) {
+            self::client()->revokeSingleConsent($consentId);
+        }
     }
 
     public function testWindowOlderThanTwentyFourMonthsIsRejectedWithItsErrorCode(): void
