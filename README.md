@@ -50,26 +50,37 @@ This project is licensed under the MIT License.
 - PHP 7.4 or later with the `curl` and `json` extensions (check with `php -v` and `php -m`) — the same floor the library itself supports
 - [Composer 2](https://getcomposer.org/)
 
-On PHP 8.2 or later you can install straight from the committed `composer.lock`. Below that, the lock does not apply, because PHPUnit 11 requires PHP 8.2: run `composer update` instead and Composer resolves the test tooling your runtime can take, which is what the 7.4 CI row does. That is a limit of the development tooling alone and says nothing about which PHP versions the library runs on — 7.4 and 8.0 up, every one of them exercised by CI.
+On PHP 8.4.1 or later you can install straight from the committed `composer.lock`. Below that, the lock does not apply, because PHPUnit 13 requires PHP 8.4.1: run `composer update` instead and Composer resolves the test tooling your runtime can take (PHPUnit 12 on 8.3, 11 on 8.2, 9 or 10 below that), which is what the CI matrix does. That is a limit of the development tooling alone and says nothing about which PHP versions the library runs on — 7.4 and 8.0 up, every one of them exercised by CI.
 
 ### Install and test
 From the repository root:
 ```bash
-composer install     # PHP 8.2+; on 7.4-8.1 run `composer update` instead
+composer install     # PHP 8.4.1+; on 7.4-8.3 run `composer update` instead
 composer test        # PHPUnit
 composer analyse     # PHPStan, level 8
 ```
 
-The suite needs no network or sandbox credentials: HTTP is replaced by an in-memory transport (one test drives the real cURL transport at a closed loopback port to cover the failure path) and sleeps are stubbed, so the retry and polling tests run instantly. The PSR adapters are covered with in-memory PSR-6/PSR-16 doubles and `nyholm/psr7`. The APCu cache tests run wherever the extension is enabled for the CLI (`apc.enable_cli=1`) and are skipped elsewhere.
+The unit suite needs no network or sandbox credentials: HTTP is replaced by an in-memory transport (one test drives the real cURL transport at a closed loopback port to cover the failure path) and sleeps are stubbed, so the retry and polling tests run instantly. The PSR adapters are covered with in-memory PSR-6/PSR-16 doubles and `nyholm/psr7`. The APCu cache tests run wherever the extension is enabled for the CLI (`apc.enable_cli=1`) and are skipped elsewhere.
 
-The Laravel, Symfony and CakePHP glue is tested against the real frameworks from `test-frameworks/`, a separate Composer project (PHP 8.2+, though its committed lock resolves Symfony 8.1 and so needs 8.4+ to install from directly, which is why the steps below update rather than install) that boots each container, resolves the client and checks that the sandbox flag and token cache are wired as documented. It also runs PHPStan over the glue with the frameworks installed, which the main analysis cannot do:
+The Laravel, Symfony and CakePHP glue is tested against the real frameworks from `test-frameworks/`, a separate Composer project (PHP 8.2+, though its committed lock resolves Symfony 8.1, Laravel 13 and PHPUnit 13 and so needs 8.4.1+ to install from directly, which is why the steps below update rather than install) that boots each container, resolves the client and checks that the sandbox flag and token cache are wired as documented. It also runs PHPStan over the glue with the frameworks installed, which the main analysis cannot do:
 ```bash
 cd test-frameworks
 composer update
 composer analyse
 composer test
 ```
-CI runs both suites on every pull request and on every push to `master`.
+### Sandbox integration tests
+`test-integration/` drives the real Blink Debit sandbox, as the Java, Node and .NET SDKs' integration suites do: the token endpoint, bank metadata, quick payments, single and enduring consents in every flow, payments, account-number refunds, fixed recurring payments, transactions, webhook subscriptions and the await helpers against real sandbox timings. The sandbox's PNZ test bank authorises decoupled consents on its own and settles payments at once, which is what lets the payment and refund tests run unattended.
+
+The suite is not part of `composer test`. Export your sandbox credentials and run it on its own:
+```bash
+export BLINKPAY_CLIENT_ID=...
+export BLINKPAY_CLIENT_SECRET=...
+composer test:integration
+```
+Without the credentials (unset or blank) every test is skipped. The client is always built for the sandbox: `BLINKPAY_SANDBOX` must be unset or true, and although the SDK never reads `BLINKPAY_DEBIT_URL`, one naming any host other than the sandbox fails the run, so a misconfigured CI variable is caught rather than ignored. These tests create consents and payments. A full run takes a few minutes, most of it waiting on the sandbox.
+
+CI runs the unit and framework suites on every pull request and on every push to `master`, and the sandbox suite alongside them with the organisation's test client. The sandbox job is not run for pull requests from forks or from Dependabot, which cannot read the secret; where it does run, a skipped test fails the job.
 
 ## Minimum Requirements
 - PHP 7.4 or later (8.1+ recommended; the Symfony bundle needs Symfony 6.1+ and therefore PHP 8.1+)
@@ -673,7 +684,7 @@ $refund = $client->getRefund($refundId);
 ```
 
 ### Transactions
-For reconciliation. Results are newest first; `page` is 1–10000 and `size` is 1–1000 (default 100).
+For reconciliation. Results are oldest first, so a fresh row sits on the last page of a wide window; `page` is 1–10000 and `size` is 1–1000 (default 100).
 ```php
 $transactions = $client->getTransactions('2026-09-01T00:00:00+12:00', '2026-09-01T23:59:59+12:00', [
     'bank' => Bank::BNZ,

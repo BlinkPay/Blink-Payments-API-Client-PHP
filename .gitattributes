@@ -1,12 +1,15 @@
 # Trim the zipball Composer downloads for consumers. src/ and config/ ship:
 # config/blinkpay.php is loaded at runtime by the Laravel service provider.
-# Composer ignores a dependency's lock, so shipping ours only adds weight.
-/.github                  export-ignore
+#
+# The lock files, the workflows and test-frameworks/ are exported on purpose:
+# Aikido reads the repository as an archive export, which honours these
+# rules, so an ignored lock file is a missing lock file to it and the
+# dependency scan sees nothing. Composer ignores a dependency's lock, so
+# exporting ours costs consumers only download weight.
 /.gitattributes           export-ignore
 /.gitignore               export-ignore
-/composer.lock            export-ignore
 /phpstan.neon.dist        export-ignore
 /phpunit.xml.dist         export-ignore
 /sonar-project.properties export-ignore
 /test                     export-ignore
-/test-frameworks          export-ignore
+/test-integration         export-ignore

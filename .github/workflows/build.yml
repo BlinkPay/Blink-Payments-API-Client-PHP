@@ -19,7 +19,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.3'
           extensions: curl, json
@@ -27,7 +27,7 @@ jobs:
       - name: Cache Composer packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.composer/cache
+          path: ~/.cache/composer
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-
       - name: Validate composer.json and the committed lock
@@ -53,7 +53,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup PHP ${{ matrix.php-version }}
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: ${{ matrix.php-version }}
           # apcu backs the default token cache; enabling it for the CLI lets its tests run.
@@ -63,19 +63,56 @@ jobs:
       - name: Cache Composer packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.composer/cache
+          path: ~/.cache/composer
           key: ${{ runner.os }}-composer-${{ matrix.php-version }}-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-${{ matrix.php-version }}-
       - name: Install packages
         # The root composer.lock is committed so scanners see the dependency set,
-        # but phpunit 11 pins it to PHP 8.2+, so the 7.4 and 8.1 rows cannot
+        # but phpunit 13 pins it to PHP 8.4.1+, so the rows below that cannot
         # install from it. The matrix updates instead, which also tests every
         # version against the highest set its own runtime allows.
         run: composer update --no-interaction --no-progress --prefer-dist
       - name: Lint
-        run: find src test config -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
+        run: find src test test-integration config -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
       - name: Test
         run: vendor/bin/phpunit
+
+  integration:
+    # Drives the real Blink Debit sandbox with the organisation's test client,
+    # as the Java, Node and .NET SDKs do. Not run for forks or Dependabot,
+    # which cannot read the secret; where it does run, a skipped test fails
+    # the job, so a missing secret cannot pass as a green build.
+    if: github.actor != 'dependabot[bot]' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    # After the unit matrix, so a red unit suite does not spend sandbox
+    # consents or the token endpoint's rate budget.
+    needs: [ static_analysis, build_test ]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup PHP
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.3'
+          extensions: curl, json
+          coverage: none
+      - name: Cache Composer packages
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/composer
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
+          restore-keys: ${{ runner.os }}-composer-
+      - name: Install packages
+        run: composer update --no-interaction --no-progress --prefer-dist
+      - name: Run the sandbox integration tests
+        run: vendor/bin/phpunit --testsuite integration --fail-on-skipped
+        env:
+          # The suite refuses any debit URL other than the sandbox.
+          BLINKPAY_DEBIT_URL: ${{ vars.DEBIT_URL }}
+          BLINKPAY_CLIENT_ID: ${{ vars.CLIENT_ID }}
+          BLINKPAY_CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
 
   framework_glue:
     # Boots the real Laravel, Symfony and CakePHP containers against the
@@ -95,7 +132,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup PHP ${{ matrix.php-version }}
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: ${{ matrix.php-version }}
           extensions: curl, json, intl, mbstring
@@ -103,7 +140,7 @@ jobs:
       - name: Cache Composer packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.composer/cache
+          path: ~/.cache/composer
           key: ${{ runner.os }}-composer-frameworks-${{ matrix.php-version }}-${{ hashFiles('test-frameworks/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-frameworks-${{ matrix.php-version }}-
       - name: Install frameworks
@@ -123,7 +160,7 @@ jobs:
           # Full history so SonarCloud can attribute new code accurately
           fetch-depth: 0
       - name: Setup PHP
-        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
         with:
           php-version: '8.3'
           extensions: curl, json
@@ -137,7 +174,7 @@ jobs:
       - name: Cache Composer packages
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.composer/cache
+          path: ~/.cache/composer
           key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.json') }}
           restore-keys: ${{ runner.os }}-composer-
       - name: Install packages
@@ -147,7 +184,7 @@ jobs:
       - name: Run Sonar
         # Gates the build. Skipped on pull requests from forks, which cannot read the token.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-        uses: sonarsource/sonarqube-scan-action@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
+        uses: sonarsource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         with:
           projectBaseDir: .
           args: >
