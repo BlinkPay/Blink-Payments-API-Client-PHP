@@ -64,7 +64,9 @@ class QuickPaymentsIntegrationTest extends IntegrationTestCase
 
         $quickPayment = self::client()->getQuickPayment($quickPaymentId);
         $this->assertSame(FlowType::DECOUPLED, $quickPayment['consent']['detail']['flow']['detail']['type'] ?? null);
-        $this->assertSame(self::PHONE_NUMBER, $quickPayment['consent']['detail']['flow']['detail']['identifier_value'] ?? null);
+        $flowDetail = $quickPayment['consent']['detail']['flow']['detail'] ?? [];
+        $this->assertArrayHasKey('identifier_value', $flowDetail);
+        $this->assertContains($flowDetail['identifier_value'], [self::PHONE_NUMBER, null], 'Blink Debit nulls it once the bank has the request.');
     }
 
     public function testUnknownQuickPaymentIsNotFound(): void

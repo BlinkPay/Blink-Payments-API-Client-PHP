@@ -60,7 +60,9 @@ class SingleConsentsIntegrationTest extends IntegrationTestCase
         $consent = self::client()->getSingleConsent($consentId);
         $this->assertSame(ConsentStatus::AUTHORISED, $consent['status'] ?? null);
         $this->assertSame(FlowType::DECOUPLED, $consent['detail']['flow']['detail']['type'] ?? null);
-        $this->assertSame(self::PHONE_NUMBER, $consent['detail']['flow']['detail']['identifier_value'] ?? null);
+        $flowDetail = $consent['detail']['flow']['detail'] ?? [];
+        $this->assertArrayHasKey('identifier_value', $flowDetail);
+        $this->assertContains($flowDetail['identifier_value'], [self::PHONE_NUMBER, null], 'Blink Debit nulls it once the bank has the request.');
     }
 
     public function testUnknownSingleConsentIsNotFound(): void
