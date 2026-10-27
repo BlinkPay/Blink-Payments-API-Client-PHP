@@ -180,7 +180,14 @@ jobs:
       - name: Install packages
         run: composer update --no-interaction --no-progress --prefer-dist
       - name: Test with coverage
-        run: vendor/bin/phpunit --coverage-filter src --coverage-clover build/coverage.xml --log-junit build/junit.xml
+        # Clover for Sonar, Cobertura for Aikido, which reads LCOV or Cobertura only.
+        run: vendor/bin/phpunit --coverage-filter src --coverage-clover build/coverage.xml --coverage-cobertura build/cobertura.xml --log-junit build/junit.xml
+      - name: Store the Cobertura report for the Aikido upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage
+          path: build/cobertura.xml
+          retention-days: 1
       - name: Run Sonar
         # Gates the build. Skipped on pull requests from forks, which cannot read the token.
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -193,3 +200,30 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: https://sonarcloud.io
+
+  # Aikido's PR check waits 30 minutes for a report tied to the PR head commit,
+  # which the action reads from the event payload. Kept as its own job so the
+  # OIDC token grant stays off the test jobs, as Aikido recommends. Fork PRs
+  # cannot mint an OIDC token, so they are skipped.
+  aikido-coverage:
+    if: ${{ !github.event.pull_request.head.repo.fork }}
+    needs: sonar
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the Cobertura report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage
+          path: build
+      - name: Upload coverage to Aikido
+        uses: AikidoSec/code-coverage-github-action@e0637ab96a560c1ab11671c41a4a4668075bae0e # v2.1.1
+        with:
+          region: au
+          # The action tells the format from the filename, so keep "cobertura" in it.
+          file-paths: build/cobertura.xml
