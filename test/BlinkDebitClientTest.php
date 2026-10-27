@@ -924,4 +924,32 @@ class BlinkDebitClientTest extends TestCase
     {
         $this->assertSame('delete:subscription', BlinkDebitClient::SCOPE_DELETE_SUBSCRIPTION);
     }
+
+    public function testGetSingleConsentReturnsANullIdentifierValueOnADecoupledFlow(): void
+    {
+        $this->queueToken();
+        $this->transport->queueRaw(200, '{"consent_id":"a5d7c994-1a4a-4061-9987-c07d8ab34e28","status":"AwaitingAuthorisation",'
+            . '"detail":{"type":"single","flow":{"detail":{"type":"decoupled","bank":"PNZ",'
+            . '"identifier_type":"phone_number","identifier_value":null}}}}');
+
+        $flowDetail = $this->client()->getSingleConsent('a5d7c994-1a4a-4061-9987-c07d8ab34e28')['detail']['flow']['detail'];
+
+        $this->assertArrayHasKey('identifier_value', $flowDetail);
+        $this->assertNull($flowDetail['identifier_value']);
+        $this->assertSame('phone_number', $flowDetail['identifier_type']);
+    }
+
+    public function testGetQuickPaymentReturnsANullIdentifierValueOnAGatewayDecoupledFlowHint(): void
+    {
+        $this->queueToken();
+        $this->transport->queueRaw(200, '{"quick_payment_id":"0bc459ab-dab7-4abf-9ee8-86be8397f08e","consent":{"status":"Revoked",'
+            . '"detail":{"type":"single","flow":{"detail":{"type":"gateway","redirect_uri":"https://shop.example/return",'
+            . '"flow_hint":{"type":"decoupled","bank":"PNZ","identifier_type":"phone_number","identifier_value":null}}}}}}');
+
+        $flowHint = $this->client()->getQuickPayment('0bc459ab-dab7-4abf-9ee8-86be8397f08e')['consent']['detail']['flow']['detail']['flow_hint'];
+
+        $this->assertArrayHasKey('identifier_value', $flowHint);
+        $this->assertNull($flowHint['identifier_value']);
+        $this->assertSame('phone_number', $flowHint['identifier_type']);
+    }
 }
