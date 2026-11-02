@@ -267,6 +267,13 @@ The plugin registers the client in the DI container for constructor and action i
 ## Request ID, Correlation ID and Idempotency Key
 Every request carries a `request-id` and an `x-correlation-id`. The SDK generates both as UUIDs when you supply none, and keeps them (and the idempotency key) the same across its own retries of one logical request, so a retried call shows up in BlinkPay's logs as one interaction. Every request also carries `User-Agent: blink-debit-api-client-php/<version> php/<php version>`, so support can tell SDK traffic apart.
 
+**Identifying your integration.** If you ship a plugin, module or app built on this SDK, call `setAppInfo()` once after creating the client. It appends your integration's name, version and (optionally) a URL to the User-Agent of every request, including the token request, so BlinkPay support can find a merchant's traffic in our logs:
+```php
+$client->setAppInfo('blinkpay-nz-for-woocommerce', '1.2.2', 'https://shop.example.co.nz/');
+// User-Agent: blink-debit-api-client-php/1.0.9 php/8.3.0 blinkpay-nz-for-woocommerce/1.2.2 (+https://shop.example.co.nz/)
+```
+The name and version must be HTTP tokens: non-empty, with no whitespace, `/`, `(`, `)` or other separators. The URL is optional and must be an absolute `http://` or `https://` URL with no whitespace, control characters or parentheses. Anything else throws `BlinkDebitApiException`. Without `setAppInfo()` the User-Agent is unchanged.
+
 To supply your own IDs, or the customer-context headers the API defines, pass a trailing `RequestOptions`:
 ```php
 use BlinkPay\BlinkDebit\RequestOptions;

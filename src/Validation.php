@@ -20,6 +20,9 @@ final class Validation
     /** Spec pattern for monetary totals: up to 13 integer digits and 1-2 decimals. */
     private const AMOUNT_PATTERN = '/^\d{1,13}\.\d{1,2}$/D';
 
+    /** RFC 9110 token: what a User-Agent product name or version may contain. */
+    private const PRODUCT_TOKEN_PATTERN = '/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/D';
+
     private function __construct()
     {
         // Static-only class: not meant to be instantiated.
@@ -112,6 +115,50 @@ final class Validation
         $value = trim($value);
         if (filter_var($value, FILTER_VALIDATE_URL) === false || strtolower((string) parse_url($value, PHP_URL_SCHEME)) !== 'https') {
             throw new BlinkDebitApiException(sprintf('Invalid %s: expected an absolute https:// URL.', $label));
+        }
+
+        return $value;
+    }
+
+    /**
+     * Returns the value when it is an RFC 9110 token, the grammar of a
+     * User-Agent product name and version: non-empty, printable ASCII, and
+     * free of whitespace, "/", "(", ")" and the other separators.
+     *
+     * @throws BlinkDebitApiException
+     */
+    public static function productToken(string $value, string $label): string
+    {
+        if (!preg_match(self::PRODUCT_TOKEN_PATTERN, $value)) {
+            throw new BlinkDebitApiException(sprintf(
+                'Invalid %s: must be non-empty and contain only letters, digits and !#$%%&\'*+-.^_`|~ (no whitespace, "/", "(" or ")").',
+                $label
+            ));
+        }
+
+        return $value;
+    }
+
+    /**
+     * Returns the value when it is an absolute http:// or https:// URL that can
+     * sit inside a User-Agent comment: no whitespace, control characters,
+     * parentheses or backslashes.
+     *
+     * @throws BlinkDebitApiException
+     */
+    public static function appUrl(string $value, string $label): string
+    {
+        $scheme = strtolower((string) parse_url($value, PHP_URL_SCHEME));
+        if (
+            preg_match('/[\s\x00-\x1F\x7F()\\\\]/', $value)
+            || filter_var($value, FILTER_VALIDATE_URL) === false
+            || ($scheme !== 'http' && $scheme !== 'https')
+            || (string) parse_url($value, PHP_URL_HOST) === ''
+        ) {
+            throw new BlinkDebitApiException(sprintf(
+                'Invalid %s: expected an absolute http:// or https:// URL with no whitespace, control characters, parentheses or backslashes.',
+                $label
+            ));
         }
 
         return $value;
