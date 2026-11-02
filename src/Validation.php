@@ -20,8 +20,14 @@ final class Validation
     /** Spec pattern for monetary totals: up to 13 integer digits and 1-2 decimals. */
     private const AMOUNT_PATTERN = '/^\d{1,13}\.\d{1,2}$/D';
 
-    /** RFC 9110 token: what a User-Agent product name or version may contain. */
-    private const PRODUCT_TOKEN_PATTERN = '/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/D';
+    /**
+     * RFC 9110 token: what a User-Agent product name or version may contain.
+     * The length caps keep the User-Agent well inside nginx's 8 KB header line
+     * limit, beyond which every request would be rejected.
+     */
+    private const PRODUCT_TOKEN_PATTERN = '/^[!#$%&\'*+.^_`|~0-9A-Za-z-]{1,100}$/D';
+
+    private const APP_URL_MAX_LENGTH = 2048;
 
     private function __construct()
     {
@@ -131,7 +137,7 @@ final class Validation
     {
         if (!preg_match(self::PRODUCT_TOKEN_PATTERN, $value)) {
             throw new BlinkDebitApiException(sprintf(
-                'Invalid %s: must be non-empty and contain only letters, digits and !#$%%&\'*+-.^_`|~ (no whitespace, "/", "(" or ")").',
+                'Invalid %s: must be 1-100 characters of letters, digits and !#$%%&\'*+-.^_`|~ (no whitespace, "/", "(" or ")").',
                 $label
             ));
         }
@@ -142,7 +148,8 @@ final class Validation
     /**
      * Returns the value when it is an absolute http:// or https:// URL that can
      * sit inside a User-Agent comment: no whitespace, control characters,
-     * parentheses or backslashes.
+     * parentheses or backslashes. Userinfo is refused so credentials in a
+     * caller's URL never reach BlinkPay's logs.
      *
      * @throws BlinkDebitApiException
      */
@@ -150,14 +157,18 @@ final class Validation
     {
         $scheme = strtolower((string) parse_url($value, PHP_URL_SCHEME));
         if (
-            preg_match('/[\s\x00-\x1F\x7F()\\\\]/', $value)
+            strlen($value) > self::APP_URL_MAX_LENGTH
+            || preg_match('/[\s\x00-\x1F\x7F()\\\\]/', $value)
             || filter_var($value, FILTER_VALIDATE_URL) === false
             || ($scheme !== 'http' && $scheme !== 'https')
             || (string) parse_url($value, PHP_URL_HOST) === ''
+            || parse_url($value, PHP_URL_USER) !== null
+            || parse_url($value, PHP_URL_PASS) !== null
         ) {
             throw new BlinkDebitApiException(sprintf(
-                'Invalid %s: expected an absolute http:// or https:// URL with no whitespace, control characters, parentheses or backslashes.',
-                $label
+                'Invalid %s: expected an absolute http:// or https:// URL of at most %d characters, with no user info, whitespace, control characters, parentheses or backslashes.',
+                $label,
+                self::APP_URL_MAX_LENGTH
             ));
         }
 

@@ -272,7 +272,7 @@ Every request carries a `request-id` and an `x-correlation-id`. The SDK generate
 $client->setAppInfo('blinkpay-nz-for-woocommerce', '1.2.2', 'https://shop.example.co.nz/');
 // User-Agent: blink-debit-api-client-php/1.0.9 php/8.3.0 blinkpay-nz-for-woocommerce/1.2.2 (+https://shop.example.co.nz/)
 ```
-The name and version must be HTTP tokens: non-empty, with no whitespace, `/`, `(`, `)` or other separators. The URL is optional and must be an absolute `http://` or `https://` URL with no whitespace, control characters or parentheses. Anything else throws `BlinkDebitApiException`. Without `setAppInfo()` the User-Agent is unchanged.
+The name and version must be HTTP tokens of up to 100 characters, with no whitespace, `/`, `(`, `)` or other separators. The URL is optional and must be an absolute `http://` or `https://` URL of up to 2048 characters, with no user info (`user:password@`), whitespace, control characters or parentheses. Anything else throws `BlinkDebitApiException`. Without `setAppInfo()` the User-Agent is unchanged.
 
 To supply your own IDs, or the customer-context headers the API defines, pass a trailing `RequestOptions`:
 ```php
