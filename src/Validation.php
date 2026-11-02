@@ -20,13 +20,12 @@ final class Validation
     /** Spec pattern for monetary totals: up to 13 integer digits and 1-2 decimals. */
     private const AMOUNT_PATTERN = '/^\d{1,13}\.\d{1,2}$/D';
 
-    /**
-     * RFC 9110 token: what a User-Agent product name or version may contain.
-     * The length caps keep the User-Agent well inside nginx's 8 KB header line
-     * limit, beyond which every request would be rejected.
-     */
-    private const PRODUCT_TOKEN_PATTERN = '/^[!#$%&\'*+.^_`|~0-9A-Za-z-]{1,100}$/D';
+    /** RFC 9110 token: what a User-Agent product name or version may contain. */
+    private const PRODUCT_TOKEN_PATTERN = '/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/D';
 
+    // Keep the User-Agent well inside nginx's 8 KB header line limit, beyond
+    // which every request would be rejected.
+    private const PRODUCT_TOKEN_MAX_LENGTH = 100;
     private const APP_URL_MAX_LENGTH = 2048;
 
     private function __construct()
@@ -128,17 +127,17 @@ final class Validation
 
     /**
      * Returns the value when it is an RFC 9110 token, the grammar of a
-     * User-Agent product name and version: non-empty, printable ASCII, and
-     * free of whitespace, "/", "(", ")" and the other separators.
+     * User-Agent product name and version.
      *
      * @throws BlinkDebitApiException
      */
     public static function productToken(string $value, string $label): string
     {
-        if (!preg_match(self::PRODUCT_TOKEN_PATTERN, $value)) {
+        if (strlen($value) > self::PRODUCT_TOKEN_MAX_LENGTH || !preg_match(self::PRODUCT_TOKEN_PATTERN, $value)) {
             throw new BlinkDebitApiException(sprintf(
-                'Invalid %s: must be 1-100 characters of letters, digits and !#$%%&\'*+-.^_`|~ (no whitespace, "/", "(" or ")").',
-                $label
+                'Invalid %s: must be 1-%d characters of letters, digits and !#$%%&\'*+-.^_`|~ (no whitespace, "/", "(" or ")").',
+                $label,
+                self::PRODUCT_TOKEN_MAX_LENGTH
             ));
         }
 
@@ -155,12 +154,11 @@ final class Validation
      */
     public static function appUrl(string $value, string $label): string
     {
-        $scheme = strtolower((string) parse_url($value, PHP_URL_SCHEME));
         if (
             strlen($value) > self::APP_URL_MAX_LENGTH
             || preg_match('/[\s\x00-\x1F\x7F()\\\\]/', $value)
             || filter_var($value, FILTER_VALIDATE_URL) === false
-            || ($scheme !== 'http' && $scheme !== 'https')
+            || !in_array(strtolower((string) parse_url($value, PHP_URL_SCHEME)), ['http', 'https'], true)
             || (string) parse_url($value, PHP_URL_HOST) === ''
             || parse_url($value, PHP_URL_USER) !== null
             || parse_url($value, PHP_URL_PASS) !== null

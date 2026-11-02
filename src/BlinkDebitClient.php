@@ -223,15 +223,13 @@ class BlinkDebitClient
     }
 
     /**
-     * Identifies the integration built on this SDK (a plugin, module or app)
-     * in the User-Agent of every request, including the token request, so
-     * BlinkPay support can find its traffic: name/version, then the URL in
-     * a comment when one is given. Calling it again replaces the previous
-     * value.
+     * Identifies the integration built on this SDK in the User-Agent of every
+     * request, including the token request, so BlinkPay support can find its
+     * traffic. Calling it again replaces the previous value.
      *
-     * @param string      $name    A product token, e.g. "blinkpay-nz-for-woocommerce".
+     * @param string      $name    e.g. "blinkpay-nz-for-woocommerce".
      * @param string      $version e.g. "1.2.2".
-     * @param string|null $url     The integration's or merchant site's absolute http(s) URL.
+     * @param string|null $url     The merchant site's absolute http(s) URL; pass null, not '', to omit it.
      *
      * @throws BlinkDebitApiException When a value is empty, is not a valid product
      *                                token or http(s) URL, or could inject a header.
