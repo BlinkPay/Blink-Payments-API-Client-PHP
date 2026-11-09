@@ -121,7 +121,6 @@ class BlinkDebitClient
     /** Interval between status polls in the await helpers. */
     private const POLL_INTERVAL_MS = 1000;
 
-    /** Request-body keys that hold an amount object. */
     private const AMOUNT_KEYS = ['amount', 'maximum_amount_payment', 'maximum_amount_period'];
 
     private string $clientId;
