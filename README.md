@@ -20,11 +20,12 @@
 10. [Error Handling](#error-handling)
 11. [Full Examples](#full-examples)
 12. [Polling and Settlement Behaviour](#polling-and-settlement-behaviour)
-13. [Individual API Call Examples](#individual-api-call-examples)
-14. [Webhooks](#webhooks)
-15. [PSR Interoperability](#psr-interoperability)
-16. [Security](#security)
-17. [Dependencies](#dependencies)
+13. [Surcharging](#surcharging)
+14. [Individual API Call Examples](#individual-api-call-examples)
+15. [Webhooks](#webhooks)
+16. [PSR Interoperability](#psr-interoperability)
+17. [Security](#security)
+18. [Dependencies](#dependencies)
 
 ## Introduction
 This SDK allows merchants with PHP-based backends to integrate with **Blink PayNow** (for one-off payments) and **Blink AutoPay** (for recurring payments).
@@ -396,7 +397,7 @@ Payment settlement is asynchronous. Payments transition through these states (co
 - `AcceptedSettlementCompleted` - ✅ **ONLY THIS STATUS means the payment was accepted**
 - `Rejected` - Payment failed
 
-For a bank (A2A) payment, `AcceptedSettlementCompleted` means the payer's bank has sent the money, and the payment carries `accepted_reason` = `source_bank_payment_sent`. For a card payment made through the gateway, it means the card network accepted the charge (`accepted_reason` = `card_network_accepted`); the funds arrive through card settlement, and the payment's `amount` may carry `surcharge` and `total_charge` (the amount the customer actually paid, inclusive of surcharge) when surcharging is enabled for your account. Store `accepted_reason` with the order: it decides which refund type applies later. Constants are on `Enum\AcceptedReason`.
+For a bank (A2A) payment, `AcceptedSettlementCompleted` means the payer's bank has sent the money, and the payment carries `accepted_reason` = `source_bank_payment_sent`. For a card payment made through the gateway, it means the card network accepted the charge (`accepted_reason` = `card_network_accepted`); the funds arrive through card settlement. A surcharged payment's `amount` also carries `surcharge` and `total_charge`; see [Surcharging](#surcharging). Store `accepted_reason` with the order: it decides which refund type applies later. Constants are on `Enum\AcceptedReason`.
 
 ### Await helpers
 Four helpers poll once a second for up to `$maxWaitSeconds` attempts and turn the outcome into typed exceptions, mirroring the Java and Node SDKs. The budget counts polls rather than elapsed time: a poll that times out or is retried adds its own duration, so lower `setRequestTimeout()` when the total wait matters. They block, so call them from a queue job, a scheduled command or a CLI script rather than a web request:
@@ -425,6 +426,23 @@ The first `getQuickPayment()` call after the consumer authorises **initiates the
 - Revoke a **quick payment** that the consumer abandoned with `revokeQuickPayment()` while it is unpaid (`awaitSuccessfulQuickPayment()` does this on timeout).
 - A **single consent** needs no clean-up if abandoned; no funds move until you create the payment. For a **card** single consent, call `createSingleConsentPayment()` promptly, as an unclaimed hold is released and the consent revoked.
 - Revoke an abandoned **enduring consent** with `revokeEnduringConsent()`; it grants ongoing access, so do not leave it open (`awaitAuthorisedEnduringConsent()` does this on timeout).
+
+## Surcharging
+When surcharging is enabled for your account, Blink returns these read-only fields as decimal strings; they are absent, or `null`, where surcharging does not apply. See the [surcharging guide](https://merchants.blinkpay.co.nz/docs/debit/guides/surcharging).
+- `surcharge` and `total_charge` (the amount `total` plus the surcharge) on the `detail.amount` of single consents, quick payments (under `consent`) and payments. On a gateway consent they appear once the customer selects a payment method. A zero bank surcharge is returned as `"0.00"`, but a zero card surcharge is omitted, so an absent `surcharge` alone does not mean surcharging was not applied.
+- On a surcharged enduring consent, `detail.maximum_amount_period` and `detail.maximum_amount_payment` carry the same two fields; `total_charge` is the raised maximum the bank is asked to authorise.
+- `surcharge_options` on a gateway consent or quick payment in `GatewayAwaitingSubmission`: a best-effort preview of what each method would add, keyed `bank` and `card` (card only on a single consent or quick payment that can be paid by card), and omitted if the rates cannot be looked up. For a single consent or quick payment each option carries `surcharge` and `total_charge`; for an enduring consent it carries `maximum_amount_payment` (omitted when there is no per-payment maximum) and `maximum_amount_period`, each with `surcharge` and `total_charge`.
+
+The API rejects these fields on consent and quick payment requests, so the client strips them from request bodies: an amount copied from a response can be sent back as it is.
+```php
+$consent = $client->getSingleConsent($consentId);
+$surcharge = $consent['detail']['amount']['surcharge'] ?? null;        // e.g. "0.68"
+$totalCharge = $consent['detail']['amount']['total_charge'] ?? null;   // e.g. "100.68"
+$cardPreview = $consent['surcharge_options']['card'] ?? null;          // while awaiting gateway submission
+
+$quickPayment = $client->getQuickPayment($quickPaymentId);
+$surcharge = $quickPayment['consent']['detail']['amount']['surcharge'] ?? null;
+```
 
 ## Individual API Call Examples
 Amounts are NZD decimal strings with one or two decimals, such as `'12.50'`. Statement text is built with `Pcr::build($particulars, $code, $reference)`, in the API's own field order, which validates against the banks' 12-character rules and passes values through unchanged; `Pcr::sanitise()` is the opt-in lossy alternative for free text. Request bodies are built with the classes in `BlinkPay\BlinkDebit\Request` (`Flow`, `QuickPaymentRequest`, `SingleConsentRequest`, `EnduringConsentRequest`, `FixedRecurringPaymentRequest`, `Amount`), which return the API's snake_case arrays, so you can also hand-build or adjust a body exactly as the [API reference](https://merchants.blinkpay.co.nz/docs) defines it. Banks, periods, identifier types, flow types and statuses have constants in `BlinkPay\BlinkDebit\Enum`.
