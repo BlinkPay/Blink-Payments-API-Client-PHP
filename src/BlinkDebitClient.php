@@ -138,6 +138,9 @@ class BlinkDebitClient
     /** @var callable(int): void Sleeps for a number of milliseconds. */
     private $sleep;
 
+    /** The integration's User-Agent suffix set by setAppInfo(), e.g. "name/1.0 (+https://shop.example/)". */
+    private ?string $appInfo = null;
+
     public function __construct(
         string $clientId,
         string $clientSecret,
@@ -219,6 +222,29 @@ class BlinkDebitClient
     public function setSleep(callable $sleep): void
     {
         $this->sleep = $sleep;
+    }
+
+    /**
+     * Identifies the integration built on this SDK in the User-Agent of every
+     * request, including the token request, so BlinkPay support can find its
+     * traffic. Calling it again replaces the previous value.
+     *
+     * @param string      $name    e.g. "blinkpay-nz-for-woocommerce".
+     * @param string      $version e.g. "1.2.2".
+     * @param string|null $url     The merchant site's absolute http(s) URL; pass null, not '', to omit it.
+     *
+     * @throws BlinkDebitApiException When a value is empty, is not a valid product
+     *                                token or http(s) URL, or could inject a header.
+     */
+    public function setAppInfo(string $name, string $version, ?string $url = null): self
+    {
+        $appInfo = Validation::productToken($name, 'app name') . '/' . Validation::productToken($version, 'app version');
+        if ($url !== null) {
+            $appInfo .= ' (+' . Validation::appUrl($url, 'app URL') . ')';
+        }
+        $this->appInfo = $appInfo;
+
+        return $this;
     }
 
     /**
@@ -1384,7 +1410,9 @@ class BlinkDebitClient
 
     private function userAgentHeader(): string
     {
-        return 'User-Agent: blink-debit-api-client-php/' . self::VERSION . ' php/' . PHP_VERSION;
+        $userAgent = 'User-Agent: blink-debit-api-client-php/' . self::VERSION . ' php/' . PHP_VERSION;
+
+        return $this->appInfo === null ? $userAgent : $userAgent . ' ' . $this->appInfo;
     }
 
     /**

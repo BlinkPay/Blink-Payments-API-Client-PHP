@@ -363,10 +363,212 @@ class BlinkDebitClientResilienceTest extends TestCase
 
         $this->client()->getMeta();
 
-        $expected = 'User-Agent: blink-debit-api-client-php/' . BlinkDebitClient::VERSION . ' php/' . PHP_VERSION;
+        $this->assertUserAgentOnTokenAndApiRequest(self::sdkUserAgent());
+    }
+
+    // --- app info --------------------------------------------------------------
+
+    private static function sdkUserAgent(): string
+    {
+        return 'User-Agent: blink-debit-api-client-php/' . BlinkDebitClient::VERSION . ' php/' . PHP_VERSION;
+    }
+
+    private function assertUserAgentOnTokenAndApiRequest(string $expected): void
+    {
+        $this->assertSame(['/oauth2/token', '/payments/v1/meta'], $this->transport->paths());
         foreach ($this->transport->requests as $request) {
-            $this->assertContains($expected, $request['headers'], $request['url']);
+            $this->assertSame([$expected], $this->headersMatching($request, 'User-Agent'), $request['url']);
         }
+    }
+
+    /**
+     * Asserts the call throws, and that a request sent afterwards carries the
+     * plain SDK User-Agent, so nothing of the rejected value reached a header.
+     */
+    private function assertAppInfoRejected(string $name, string $version, ?string $url = null): void
+    {
+        $this->transport = new FakeTransport();
+        $client = $this->client();
+        try {
+            $client->setAppInfo($name, $version, $url);
+            $this->fail(sprintf('Expected app info %s to be rejected.', json_encode([$name, $version, $url])));
+        } catch (BlinkDebitApiException $exception) {
+            $this->assertSame(0, $exception->getStatusCode());
+        }
+
+        $this->queueToken();
+        $this->transport->queue(200, []);
+        $client->getMeta();
+        $this->assertUserAgentOnTokenAndApiRequest(self::sdkUserAgent());
+    }
+
+    private function assertAppInfoAccepted(string $name, string $version, ?string $url = null): void
+    {
+        $this->transport = new FakeTransport();
+        $this->queueToken();
+        $this->transport->queue(200, []);
+        $client = $this->client();
+
+        $client->setAppInfo($name, $version, $url);
+        $client->getMeta();
+
+        $expected = self::sdkUserAgent() . ' ' . $name . '/' . $version . ($url === null ? '' : ' (+' . $url . ')');
+        $this->assertUserAgentOnTokenAndApiRequest($expected);
+    }
+
+    public function testAppInfoIsAppendedToEveryRequestIncludingTheToken(): void
+    {
+        $this->queueToken();
+        $this->transport->queue(200, []);
+        $client = $this->client();
+
+        $this->assertSame($client, $client->setAppInfo('x', '1.2.3', 'https://a.example/'));
+        $client->getMeta();
+
+        $this->assertUserAgentOnTokenAndApiRequest(self::sdkUserAgent() . ' x/1.2.3 (+https://a.example/)');
+    }
+
+    public function testAppInfoWithoutUrlOmitsTheComment(): void
+    {
+        $this->queueToken();
+        $this->transport->queue(200, []);
+        $client = $this->client();
+
+        $client->setAppInfo('blinkpay-nz-for-woocommerce', '1.2.2');
+        $client->getMeta();
+
+        $this->assertUserAgentOnTokenAndApiRequest(self::sdkUserAgent() . ' blinkpay-nz-for-woocommerce/1.2.2');
+    }
+
+    public function testSetAppInfoAgainReplacesThePreviousValue(): void
+    {
+        $this->queueToken();
+        $this->transport->queue(200, []);
+        $client = $this->client();
+
+        $client->setAppInfo('x', '1.2.3', 'https://a.example/');
+        $client->setAppInfo('y', '2.0.0');
+        $client->getMeta();
+
+        $this->assertUserAgentOnTokenAndApiRequest(self::sdkUserAgent() . ' y/2.0.0');
+    }
+
+    public function testRejectedAppInfoLeavesThePreviousValue(): void
+    {
+        $this->queueToken();
+        $this->transport->queue(200, []);
+        $client = $this->client();
+        $client->setAppInfo('x', '1.2.3', 'https://a.example/');
+
+        foreach ([['y', "2\r\n"], ['y', '2', 'ftp://b.example/']] as $arguments) {
+            try {
+                $client->setAppInfo(...$arguments);
+                $this->fail('Expected the app info to be rejected.');
+            } catch (BlinkDebitApiException $exception) {
+                $this->assertStringContainsString('Invalid app', $exception->getMessage());
+            }
+        }
+        $client->getMeta();
+
+        $this->assertUserAgentOnTokenAndApiRequest(self::sdkUserAgent() . ' x/1.2.3 (+https://a.example/)');
+    }
+
+    public function testAppInfoRejectsAnEmptyName(): void
+    {
+        $this->assertAppInfoRejected('', '1.2.3');
+    }
+
+    public function testAppInfoRejectsAnEmptyVersion(): void
+    {
+        $this->assertAppInfoRejected('x', '');
+    }
+
+    public function testAppInfoRejectsWhitespace(): void
+    {
+        $this->assertAppInfoRejected('my plugin', '1.2.3');
+        $this->assertAppInfoRejected(' x', '1.2.3');
+        $this->assertAppInfoRejected('x', "1.2\t3");
+        $this->assertAppInfoRejected('x', '1.2.3', 'https://a.example/a b');
+        $this->assertAppInfoRejected('x', '1.2.3', ' https://a.example/');
+    }
+
+    public function testAppInfoRejectsASlash(): void
+    {
+        $this->assertAppInfoRejected('x/y', '1.2.3');
+        $this->assertAppInfoRejected('x', '1.2/3');
+    }
+
+    public function testAppInfoRejectsParentheses(): void
+    {
+        $this->assertAppInfoRejected('x(', '1.2.3');
+        $this->assertAppInfoRejected('x', '1.2.3)');
+        $this->assertAppInfoRejected('x', '1.2.3', 'https://a.example/(x)');
+    }
+
+    public function testAppInfoRejectsACarriageReturn(): void
+    {
+        $this->assertAppInfoRejected("x\rX-Injected: yes", '1.2.3');
+        $this->assertAppInfoRejected('x', "1.2.3\r");
+        $this->assertAppInfoRejected('x', '1.2.3', "https://a.example/\rX-Injected: yes");
+    }
+
+    public function testAppInfoRejectsALineFeed(): void
+    {
+        $this->assertAppInfoRejected("x\nX-Injected: yes", '1.2.3');
+        $this->assertAppInfoRejected('x', "1.2.3\n");
+        $this->assertAppInfoRejected('x', '1.2.3', "https://a.example/\r\nX-Injected: yes");
+        $this->assertAppInfoRejected('x', '1.2.3', "https://a.example/\n");
+    }
+
+    public function testAppInfoRejectsOtherControlCharactersAndNonAscii(): void
+    {
+        $this->assertAppInfoRejected("x\x00", '1.2.3');
+        $this->assertAppInfoRejected('x', "1.2.3\x7F");
+        $this->assertAppInfoRejected('café', '1.2.3');
+        $this->assertAppInfoRejected('x', '1.2.3', 'https://café.example/');
+    }
+
+    public function testAppInfoRejectsANonHttpUrl(): void
+    {
+        $this->assertAppInfoRejected('x', '1.2.3', 'ftp://a.example/');
+        $this->assertAppInfoRejected('x', '1.2.3', 'mailto:support@a.example');
+    }
+
+    public function testAppInfoRejectsARelativeUrl(): void
+    {
+        $this->assertAppInfoRejected('x', '1.2.3', '/shop');
+        $this->assertAppInfoRejected('x', '1.2.3', 'shop.example');
+        $this->assertAppInfoRejected('x', '1.2.3', '//shop.example/');
+        $this->assertAppInfoRejected('x', '1.2.3', '');
+    }
+
+    public function testAppInfoRejectsCredentialsInTheUrl(): void
+    {
+        $this->assertAppInfoRejected('x', '1.2.3', 'https://user:secret@a.example/');
+        $this->assertAppInfoRejected('x', '1.2.3', 'https://user@a.example/');
+    }
+
+    public function testAppInfoRejectsABackslashInTheUrl(): void
+    {
+        $this->assertAppInfoRejected('x', '1.2.3', 'https://a.example/a\\b');
+    }
+
+    public function testAppInfoLengthIsCapped(): void
+    {
+        $this->assertAppInfoAccepted(str_repeat('n', 100), str_repeat('1', 100));
+        $this->assertAppInfoRejected(str_repeat('n', 101), '1.2.3');
+        $this->assertAppInfoRejected('x', str_repeat('1', 101));
+
+        $longUrl = 'https://a.example/' . str_repeat('p', 2048 - strlen('https://a.example/'));
+        $this->assertAppInfoAccepted('x', '1.2.3', $longUrl);
+        $this->assertAppInfoRejected('x', '1.2.3', $longUrl . 'p');
+    }
+
+    public function testAppInfoAcceptsHttpAndAnyCaseScheme(): void
+    {
+        $this->assertAppInfoAccepted('x', '1.2.3', 'http://localhost:8080/');
+        $this->assertAppInfoAccepted('x', '1.2.3', 'HTTPS://A.EXAMPLE/');
+        $this->assertAppInfoAccepted('x', '1.2.3-beta.1+build.7', 'https://a.example:8443/shop?x=1#y');
     }
 
     public function testSubscriptionEventTypesAreValidatedLocally(): void
