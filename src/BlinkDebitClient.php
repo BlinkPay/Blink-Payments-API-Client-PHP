@@ -42,7 +42,7 @@ use BlinkPay\BlinkDebit\Request\SingleConsentRequest;
 class BlinkDebitClient
 {
     /** SDK version, sent in the User-Agent header so support can identify SDK traffic. */
-    public const VERSION = '1.0.9';
+    public const VERSION = '1.1.0';
 
     public const PRODUCTION_BASE_URL = 'https://debit.blinkpay.co.nz';
     public const SANDBOX_BASE_URL = 'https://sandbox.debit.blinkpay.co.nz';
@@ -120,6 +120,8 @@ class BlinkDebitClient
 
     /** Interval between status polls in the await helpers. */
     private const POLL_INTERVAL_MS = 1000;
+
+    private const AMOUNT_KEYS = ['amount', 'maximum_amount_payment', 'maximum_amount_period'];
 
     private string $clientId;
 
@@ -421,7 +423,12 @@ class BlinkDebitClient
      */
     public function createQuickPayment(array $payload, string $idempotencyKey, ?RequestOptions $options = null): array
     {
-        return $this->request('POST', '/quick-payments', $payload, $this->headersFor($options, $idempotencyKey));
+        return $this->request(
+            'POST',
+            '/quick-payments',
+            self::withoutSurchargeFields($payload),
+            $this->headersFor($options, $idempotencyKey)
+        );
     }
 
     /**
@@ -627,7 +634,12 @@ class BlinkDebitClient
      */
     public function createSingleConsent(array $payload, string $idempotencyKey, ?RequestOptions $options = null): array
     {
-        return $this->request('POST', '/single-consents', $payload, $this->headersFor($options, $idempotencyKey));
+        return $this->request(
+            'POST',
+            '/single-consents',
+            self::withoutSurchargeFields($payload),
+            $this->headersFor($options, $idempotencyKey)
+        );
     }
 
     /**
@@ -734,7 +746,12 @@ class BlinkDebitClient
      */
     public function createEnduringConsent(array $payload, string $idempotencyKey, ?RequestOptions $options = null): array
     {
-        return $this->request('POST', '/enduring-consents', $payload, $this->headersFor($options, $idempotencyKey));
+        return $this->request(
+            'POST',
+            '/enduring-consents',
+            self::withoutSurchargeFields($payload),
+            $this->headersFor($options, $idempotencyKey)
+        );
     }
 
     /**
@@ -839,7 +856,7 @@ class BlinkDebitClient
         return $this->request(
             'POST',
             '/fixed-recurring-payments',
-            $payload,
+            self::withoutSurchargeFields($payload),
             $this->tracingHeadersFor($options, $idempotencyKey)
         );
     }
@@ -900,7 +917,12 @@ class BlinkDebitClient
      */
     public function createPayment(array $payload, string $idempotencyKey, ?RequestOptions $options = null): array
     {
-        return $this->request('POST', '/payments', $payload, $this->headersFor($options, $idempotencyKey));
+        return $this->request(
+            'POST',
+            '/payments',
+            self::withoutSurchargeFields($payload),
+            $this->headersFor($options, $idempotencyKey)
+        );
     }
 
     /**
@@ -1123,7 +1145,12 @@ class BlinkDebitClient
             $this->assertUuid($payload['payment_id'], self::LABEL_PAYMENT_ID);
         }
 
-        return $this->request('POST', '/refunds', $payload, $this->headersFor($options, $idempotencyKey));
+        return $this->request(
+            'POST',
+            '/refunds',
+            self::withoutSurchargeFields($payload),
+            $this->headersFor($options, $idempotencyKey)
+        );
     }
 
     /**
@@ -1504,6 +1531,30 @@ class BlinkDebitClient
         }
 
         return $path . '?' . http_build_query($params, '', '&', PHP_QUERY_RFC3986);
+    }
+
+    /**
+     * Drops the read-only surcharge fields Blink returns on amounts and
+     * consents, so an amount copied from a GET response can be sent back: a
+     * consent or quick payment request carrying them is rejected with a 400,
+     * and POST /payments ignores them.
+     *
+     * @param array<string, mixed> $payload
+     *
+     * @return array<string, mixed>
+     */
+    private static function withoutSurchargeFields(array $payload): array
+    {
+        unset($payload['surcharge_options']);
+        foreach (self::AMOUNT_KEYS as $key) {
+            $amount = $payload[$key] ?? null;
+            if (is_array($amount)) {
+                unset($amount['surcharge'], $amount['total_charge']);
+                $payload[$key] = $amount;
+            }
+        }
+
+        return $payload;
     }
 
     /**
